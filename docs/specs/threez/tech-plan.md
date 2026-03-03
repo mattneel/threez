@@ -488,10 +488,12 @@ threez/
 │   └── zig-quickjs-ng/              # Vendored + patched for Zig 0.15.x
 ├── docs/
 │   └── specs/
-│       ├── epic-brief.md
-│       ├── core-flows.md
-│       ├── tech-plan.md
-│       └── tickets.md
+│       └── threez/
+│           ├── epic-brief.md
+│           ├── core-flows.md
+│           ├── tech-plan.md
+│           ├── tickets.md
+│           └── threejs-gaps.md
 ├── LICENSE                          # MIT
 └── README.md
 ```

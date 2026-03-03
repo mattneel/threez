@@ -138,13 +138,24 @@ export class GPUCanvasContext {
   private _configured = false;
   private _device: GPUDevice | null = null;
   private _format: string = "bgra8unorm";
+  private _width: number = 0;
+  private _height: number = 0;
 
   configure(config: { device: GPUDevice; format?: string; alphaMode?: string }): void {
     this._device = config.device;
     this._format = config.format ?? "bgra8unorm";
     this._configured = true;
+    const g = globalThis as any;
+    this._width = g?.window?.innerWidth ?? 0;
+    this._height = g?.window?.innerHeight ?? 0;
     const native = getNative();
-    native?.gpuConfigureContext?.(config.device._handle, this._format, config.alphaMode ?? "opaque", 0, 0);
+    native?.gpuConfigureContext?.(
+      config.device._handle,
+      this._format,
+      config.alphaMode ?? "opaque",
+      this._width,
+      this._height,
+    );
   }
 
   unconfigure(): void {

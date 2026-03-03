@@ -723,7 +723,7 @@ Bundle Three.js (latest, pinned commit hash) with esbuild. Attempt to evaluate i
 - [ ] Logging Proxy captures all property accesses on global objects
 - [ ] Complete list of missing/failing APIs documented
 - [ ] Each gap categorized: critical (blocks init), important (blocks render), nice-to-have
-- [ ] Gap list saved to docs/specs/threejs-gaps.md
+- [ ] Gap list saved to docs/specs/threez/threejs-gaps.md
 - [ ] No code fixes in this ticket — analysis only
 
 **Implementation Steps**:
@@ -741,12 +741,12 @@ globalThis.window = new Proxy(window, handler);
 
 Step 4 — Attempt eval, capture output, categorize every logged access and every thrown error
 
-Step 5 — Write docs/specs/threejs-gaps.md with prioritized gap list
+Step 5 — Write docs/specs/threez/threejs-gaps.md with prioritized gap list
 
 ---
 
 ### T21b: Three.js integration: fix polyfill gaps
-**Specs**: docs/specs/threejs-gaps.md (output of T21a)
+**Specs**: docs/specs/threez/threejs-gaps.md (output of T21a)
 **Files**: Various polyfill files (TS + Zig), update `src/root.zig`
 **Dependencies**: T21a
 **Effort**: Large

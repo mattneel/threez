@@ -179,6 +179,7 @@ const RunConfig = struct {
 /// State passed to GLFW callbacks via the window user pointer.
 const CallbackState = struct {
     event_bridge: *EventBridge,
+    gpu_bridge: *GpuBridge,
 };
 
 fn runScript(allocator: std.mem.Allocator, js_path: []const u8, config: RunConfig) !void {
@@ -271,7 +272,10 @@ fn runScript(allocator: std.mem.Allocator, js_path: []const u8, config: RunConfi
     defer event_bridge.deinit();
 
     // Set up GLFW callbacks via user pointer
-    var callback_state = CallbackState{ .event_bridge = &event_bridge };
+    var callback_state = CallbackState{
+        .event_bridge = &event_bridge,
+        .gpu_bridge = &gpu_bridge,
+    };
     window.glfw_window.setUserPointer(@ptrCast(&callback_state));
 
     _ = window.glfw_window.setCursorPosCallback(&glfwCursorPosCallback);
@@ -380,6 +384,9 @@ fn glfwKeyCallback(
 
 fn glfwFramebufferSizeCallback(glfw_win: *zglfw.Window, width: c_int, height: c_int) callconv(.c) void {
     const state = glfw_win.getUserPointer(CallbackState) orelse return;
+    if (width > 0 and height > 0) {
+        state.gpu_bridge.onFramebufferResize(@intCast(width), @intCast(height));
+    }
     state.event_bridge.onResize(@intCast(width), @intCast(height));
 }
 

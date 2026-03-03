@@ -260,12 +260,23 @@
     _configured = false;
     _device = null;
     _format = "bgra8unorm";
+    _width = 0;
+    _height = 0;
     configure(config) {
       this._device = config.device;
       this._format = config.format ?? "bgra8unorm";
       this._configured = true;
+      const g2 = globalThis;
+      this._width = g2?.window?.innerWidth ?? 0;
+      this._height = g2?.window?.innerHeight ?? 0;
       const native = getNative();
-      native?.gpuConfigureContext?.(config.device._handle, this._format, config.alphaMode ?? "opaque", 0, 0);
+      native?.gpuConfigureContext?.(
+        config.device._handle,
+        this._format,
+        config.alphaMode ?? "opaque",
+        this._width,
+        this._height
+      );
     }
     unconfigure() {
       this._configured = false;
@@ -1652,10 +1663,8 @@
       this.size = totalLen;
     }
     arrayBuffer() {
-      return Promise.resolve(this._data.buffer.slice(
-        this._data.byteOffset,
-        this._data.byteOffset + this._data.byteLength
-      ));
+      const bytes = this._data.slice();
+      return Promise.resolve(bytes.buffer);
     }
     text() {
       let str = "";

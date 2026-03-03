@@ -124,10 +124,8 @@ class BlobPolyfill {
   }
 
   arrayBuffer(): Promise<ArrayBuffer> {
-    return Promise.resolve(this._data.buffer.slice(
-      this._data.byteOffset,
-      this._data.byteOffset + this._data.byteLength,
-    ));
+    const bytes = this._data.slice();
+    return Promise.resolve(bytes.buffer as ArrayBuffer);
   }
 
   text(): Promise<string> {

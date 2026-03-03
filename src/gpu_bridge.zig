@@ -75,6 +75,21 @@ pub const GpuBridge = struct {
         self.handle_table_ptr.free(self.adapter_id) catch {};
     }
 
+    /// Recreate the swapchain when framebuffer size changes.
+    /// This keeps the acquired backbuffer texture dimensions aligned with
+    /// depth/color attachments Three.js allocates for the new size.
+    pub fn onFramebufferResize(self: *GpuBridge, width: u32, height: u32) void {
+        const gctx = self.gctx orelse return;
+        if (width == 0 or height == 0) return;
+        if (gctx.swapchain_descriptor.width == width and gctx.swapchain_descriptor.height == height) return;
+
+        gctx.swapchain_descriptor.width = width;
+        gctx.swapchain_descriptor.height = height;
+        gctx.swapchain.release();
+        gctx.swapchain = gctx.device.createSwapChain(gctx.surface, gctx.swapchain_descriptor);
+        log.info("swapchain resized to {}x{}", .{ width, height });
+    }
+
     /// Register the GPU bridge native functions onto the __native object
     /// in the given QuickJS context.
     ///
@@ -2668,7 +2683,8 @@ fn gpuConfigureContextNative(
     func_data: [*c]c.JSValue,
 ) Value {
     const context = ctx orelse return Value.undefined;
-    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+    const bridge = getBridgeFromData(context, func_data) orelse return Value.undefined;
+    const ht = bridge.handle_table_ptr;
 
     // argv[0] = deviceId — validate device handle exists
     if (argv.len < 1) return Value.undefined;
@@ -2679,9 +2695,16 @@ fn gpuConfigureContextNative(
 
     // argv[1] = format (string, e.g. "bgra8unorm"), accepted but not used yet
     // argv[2] = alphaMode (string, e.g. "opaque"), accepted but not used yet
-    // argv[3] = width (number), accepted but not used yet
-    // argv[4] = height (number), accepted but not used yet
-    // All accepted for future Dawn surface configuration.
+    // argv[3] = width (number), argv[4] = height (number)
+    if (argv.len >= 5) {
+        const w_val: Value = @bitCast(argv[3]);
+        const h_val: Value = @bitCast(argv[4]);
+        const width_f = w_val.toFloat64(context) catch 0;
+        const height_f = h_val.toFloat64(context) catch 0;
+        if (width_f > 0 and height_f > 0) {
+            bridge.onFramebufferResize(@intFromFloat(width_f), @intFromFloat(height_f));
+        }
+    }
 
     return Value.undefined;
 }
@@ -2728,7 +2751,8 @@ fn gpuPresentNative(
     const bridge = getBridgeFromData(context, func_data) orelse return Value.undefined;
     const gctx = bridge.gctx orelse return Value.undefined;
 
-    gctx.swapchain.present();
+    _ = gctx.present();
+    bridge.frame_texture_acquired = false;
     return Value.undefined;
 }
 
