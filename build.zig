@@ -60,6 +60,18 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("quickjs", qjs_mod);
     exe.linkLibrary(qjs_lib);
 
+    // --- Library artifact ---
+    // QuickJS Value is an extern struct; use LLVM backend.
+    const lib = b.addLibrary(.{
+        .name = "threez",
+        .root_module = lib_mod,
+        .linkage = .static,
+        .use_llvm = true,
+        .use_lld = false,
+    });
+    lib.linkLibrary(qjs_lib);
+    lib.linkLibrary(zglfw_dep.artifact("glfw"));
+
     // Dawn/WebGPU native linking:
     // zgpu's zdawn artifact compiles dawn.cpp + dawn_proc.c and links libdawn.
     // We cannot use linkLibrary(zdawn) directly because it creates a thin archive
@@ -99,6 +111,7 @@ pub fn build(b: *std.Build) void {
     }
 
     // --- Install ---
+    b.installArtifact(lib);
     b.installArtifact(exe);
 
     // --- Run step ---

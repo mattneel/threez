@@ -55,10 +55,10 @@
 | T21b | Complete | `src/ts/bootstrap/{abort,request,webgpu-constants,gpu}.ts`, `docs/specs/threez/threejs-gaps.md` | Critical/important blocker list has been reconciled to current implementation. |
 | T22 | Partial / Needs Verification | `examples/threejs_basic/scene.js`, smoke logs | Scene runs; manual visual acceptance checks (lighting/projection) not captured in this audit. |
 | T23 | Partial / Needs Verification | `examples/gltf_viewer/gltf-viewer.js`, smoke logs | DamagedHelmet loads, but several ticket acceptance items are not fully represented in script/tests. |
-| T24 | Partial / Needs Verification | `src/main.zig`, `build.zig` | CLI command path is implemented; library artifact/API goals are not complete yet. |
+| T24 | Partial / Needs Verification | `src/main.zig`, `src/runtime.zig`, `src/root.zig`, `build.zig`, `zig-out/lib/libthreez.a` | Runtime API extraction and static library artifact are now implemented; `--assets`/`--strict` semantics and explicit embed-mode verification remain open. |
 
 ## Immediate Follow-ups
 
 1. Verify T6b/T6c on real macOS/Windows targets (or CI cross-platform jobs) to close platform confidence gaps.
 2. Decide whether T23 acceptance should be reduced to current demo scope or implement missing items (animation mixer, auto-frame, remote index flow, longer soak/perf checks).
-3. Define library surface for T24 (`threez.init(...)`, runtime object, build artifact) and add tests.
+3. Close remaining T24 gaps: implement `--assets`/`--strict` behavior and add an explicit embed-mode verification path.
