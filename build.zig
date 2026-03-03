@@ -151,6 +151,11 @@ pub fn build(b: *std.Build) void {
     });
     exe_unit_tests.linkLibrary(qjs_lib);
 
+    // Add lazy dependencies to exe test module
+    if (b.lazyDependency("clap", .{})) |clap_dep| {
+        exe_unit_tests.root_module.addImport("clap", clap_dep.module("clap"));
+    }
+
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
