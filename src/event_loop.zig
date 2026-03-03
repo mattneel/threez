@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const quickjs = @import("quickjs");
 const Value = quickjs.Value;
 const Context = quickjs.Context;
@@ -30,6 +31,8 @@ pub const EventLoop = struct {
     frame_count: u64,
     start_time_ns: i128,
     running: bool,
+    fail_fast: bool,
+    fatal_error: bool,
     next_raf_id: u32,
 
     /// A single requestAnimationFrame entry.
@@ -52,6 +55,8 @@ pub const EventLoop = struct {
             .frame_count = 0,
             .start_time_ns = std.time.nanoTimestamp(),
             .running = true,
+            .fail_fast = false,
+            .fatal_error = false,
             .next_raf_id = 1,
         };
     }
@@ -121,15 +126,19 @@ pub const EventLoop = struct {
     pub fn tick(self: *EventLoop) void {
         // 1. Fire timers
         self.timer_queue.tick(self.engine.context);
+        if (self.fatal_error and self.fail_fast) return;
 
         // 2. Drain microtasks (promise jobs)
         self.drainMicrotasks();
+        if (self.fatal_error and self.fail_fast) return;
 
         // 3. Fire rAF callbacks
         self.fireRafCallbacks();
+        if (self.fatal_error and self.fail_fast) return;
 
         // 4. Drain microtasks again (rAF callbacks may have queued promises)
         self.drainMicrotasks();
+        if (self.fatal_error and self.fail_fast) return;
 
         // 5. Advance frame count
         self.frame_count += 1;
@@ -140,7 +149,7 @@ pub const EventLoop = struct {
     /// ready to render.
     pub fn pumpUntilReady(self: *EventLoop) void {
         var max_ticks: u32 = 10_000; // safety limit
-        while (self.raf_callbacks.items.len == 0 and max_ticks > 0) : (max_ticks -= 1) {
+        while (self.raf_callbacks.items.len == 0 and max_ticks > 0 and !self.fatal_error) : (max_ticks -= 1) {
             self.timer_queue.tick(self.engine.context);
             self.drainMicrotasks();
         }
@@ -149,6 +158,14 @@ pub const EventLoop = struct {
     /// Stop the event loop (causes `run()` to exit at next iteration).
     pub fn stop(self: *EventLoop) void {
         self.running = false;
+    }
+
+    pub fn setFailFast(self: *EventLoop, enabled: bool) void {
+        self.fail_fast = enabled;
+    }
+
+    pub fn hasFatalError(self: *const EventLoop) bool {
+        return self.fatal_error;
     }
 
     /// Compute the current DOMHighResTimeStamp (f64 ms since EventLoop init),
@@ -166,7 +183,18 @@ pub const EventLoop = struct {
     fn drainMicrotasks(self: *EventLoop) void {
         const runtime = self.engine.runtime;
         while (runtime.isJobPending()) {
-            _ = runtime.executePendingJob() catch break;
+            _ = runtime.executePendingJob() catch |err| {
+                if (builtin.is_test) {
+                    log.warn("microtask exception: {}", .{err});
+                } else {
+                    log.err("microtask exception: {}", .{err});
+                }
+                if (self.fail_fast) {
+                    self.fatal_error = true;
+                    self.stop();
+                }
+                break;
+            };
         }
     }
 
@@ -208,10 +236,21 @@ pub const EventLoop = struct {
             if (result.isException()) {
                 const exc = ctx.getException();
                 if (exc.toCString(ctx)) |msg| {
-                    log.err("rAF callback exception: {s}", .{std.mem.span(msg)});
+                    if (builtin.is_test) {
+                        log.warn("rAF callback exception: {s}", .{std.mem.span(msg)});
+                    } else {
+                        log.err("rAF callback exception: {s}", .{std.mem.span(msg)});
+                    }
                     ctx.freeCString(msg);
                 }
                 exc.deinit(ctx);
+                result.deinit(ctx);
+                if (self.fail_fast) {
+                    self.fatal_error = true;
+                    self.stop();
+                    return;
+                }
+                continue;
             }
             result.deinit(ctx);
         }
@@ -550,4 +589,55 @@ test "rAF callback registered inside rAF fires on next tick, not same tick" {
     var r3 = try engine.eval("call_order.length", "<test>");
     defer r3.deinit();
     try testing.expectEqual(@as(i32, 2), try r3.toInt32());
+}
+
+test "fail-fast mode stops loop on rAF exception" {
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+    var queue = TimerQueue.init(testing.allocator);
+    defer queue.deinit(engine.context);
+    const timers = @import("polyfills/timers.zig");
+    try timers.register(engine.context, &queue);
+
+    var loop = EventLoop.init(testing.allocator, &engine, &queue);
+    defer loop.deinit();
+    try register(engine.context, &loop);
+    loop.setFailFast(true);
+
+    var r = try engine.eval(
+        \\requestAnimationFrame(function() {
+        \\  throw new Error("boom");
+        \\});
+    , "<test>");
+    r.deinit();
+
+    loop.tick();
+
+    try testing.expect(loop.hasFatalError());
+    try testing.expect(!loop.running);
+}
+
+test "resilient mode continues after rAF exception" {
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+    var queue = TimerQueue.init(testing.allocator);
+    defer queue.deinit(engine.context);
+    const timers = @import("polyfills/timers.zig");
+    try timers.register(engine.context, &queue);
+
+    var loop = EventLoop.init(testing.allocator, &engine, &queue);
+    defer loop.deinit();
+    try register(engine.context, &loop);
+
+    var r = try engine.eval(
+        \\requestAnimationFrame(function() {
+        \\  throw new Error("boom");
+        \\});
+    , "<test>");
+    r.deinit();
+
+    loop.tick();
+
+    try testing.expect(!loop.hasFatalError());
+    try testing.expect(loop.running);
 }

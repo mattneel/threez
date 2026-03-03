@@ -147,8 +147,8 @@ fn runMain(allocator: std.mem.Allocator, iter: *std.process.ArgIterator) !void {
     defer if (title_owned) |t| allocator.free(t);
     const win_title: [:0]const u8 = title_owned orelse "threez";
     const max_handles: u32 = res.args.@"max-handles" orelse HandleTable.default_capacity;
-    _ = res.args.assets; // reserved for future use
-    _ = res.args.strict; // reserved for future use
+    const assets_dir = res.args.assets;
+    const error_mode: runtime_mod.ErrorMode = if (res.args.strict != 0) .fail_fast else .resilient;
 
     const js_source = std.fs.cwd().readFileAlloc(allocator, js_path, 64 * 1024 * 1024) catch |err| {
         log.err("failed to read '{s}': {}", .{ js_path, err });
@@ -162,8 +162,10 @@ fn runMain(allocator: std.mem.Allocator, iter: *std.process.ArgIterator) !void {
         .height = win_height,
         .title = win_title,
         .max_handles = max_handles,
+        .assets_dir = assets_dir,
         .script_dir = script_dir,
         .source_name = js_path,
+        .error_mode = error_mode,
     });
 }
 
@@ -174,5 +176,5 @@ fn runScript(
 ) !void {
     const runtime = try runtime_mod.init(allocator, js_source, config);
     defer runtime.deinit();
-    runtime.runLoop();
+    try runtime.runLoop();
 }

@@ -8,6 +8,7 @@
 - Verification commands run:
   - `zig build` (repo root) — pass
   - `zig build test` (repo root) — pass
+  - `zig build embed-check` (repo root) — pass (`embed-check script bytes: 2953`)
   - `zig build test` (`deps/zig-quickjs-ng`) — pass
   - `npm run build` (`src/ts`) — pass
   - `npm run typecheck` (`src/ts`) — pass
@@ -20,8 +21,8 @@
 
 | Status | Count |
 |---|---:|
-| Complete | 23 |
-| Partial / Needs Verification | 5 |
+| Complete | 24 |
+| Partial / Needs Verification | 4 |
 | Not Started | 0 |
 
 ## Ticket Matrix
@@ -55,10 +56,10 @@
 | T21b | Complete | `src/ts/bootstrap/{abort,request,webgpu-constants,gpu}.ts`, `docs/specs/threez/threejs-gaps.md` | Critical/important blocker list has been reconciled to current implementation. |
 | T22 | Partial / Needs Verification | `examples/threejs_basic/scene.js`, smoke logs | Scene runs; manual visual acceptance checks (lighting/projection) not captured in this audit. |
 | T23 | Partial / Needs Verification | `examples/gltf_viewer/gltf-viewer.js`, smoke logs | DamagedHelmet loads, but several ticket acceptance items are not fully represented in script/tests. |
-| T24 | Partial / Needs Verification | `src/main.zig`, `src/runtime.zig`, `src/root.zig`, `build.zig`, `zig-out/lib/libthreez.a` | Runtime API extraction and static library artifact are now implemented; `--assets`/`--strict` semantics and explicit embed-mode verification remain open. |
+| T24 | Complete | `src/main.zig`, `src/runtime.zig`, `src/root.zig`, `build.zig`, `examples/embed_api_check.zig`, `zig-out/lib/libthreez.a` | CLI flags (`--assets`, `--strict`) are wired into runtime config/error mode, embed-mode check exists as `zig build embed-check`, and CLI+library artifacts build. |
 
 ## Immediate Follow-ups
 
 1. Verify T6b/T6c on real macOS/Windows targets (or CI cross-platform jobs) to close platform confidence gaps.
 2. Decide whether T23 acceptance should be reduced to current demo scope or implement missing items (animation mixer, auto-frame, remote index flow, longer soak/perf checks).
-3. Close remaining T24 gaps: implement `--assets`/`--strict` behavior and add an explicit embed-mode verification path.
+3. Add platform CI coverage for `zig build` + smoke runs so T22/T23 confidence is not tied to one Linux workstation.

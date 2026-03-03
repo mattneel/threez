@@ -123,6 +123,44 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the threez CLI");
     run_step.dependOn(&run_cmd.step);
 
+    // --- Embed API check ---
+    // Verifies the library can be imported by another Zig binary that embeds JS.
+    const embed_check_mod = b.createModule(.{
+        .root_source_file = b.path("examples/embed_api_check.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    embed_check_mod.addImport("threez", lib_mod);
+
+    const embed_check_exe = b.addExecutable(.{
+        .name = "threez-embed-check",
+        .root_module = embed_check_mod,
+        .use_llvm = true,
+        .use_lld = false,
+    });
+    embed_check_exe.linkLibrary(qjs_lib);
+    embed_check_exe.linkLibrary(zglfw_dep.artifact("glfw"));
+    embed_check_exe.addIncludePath(zgpu_dep.path("libs/dawn/include"));
+    embed_check_exe.addIncludePath(zgpu_dep.path("src"));
+    embed_check_exe.addCSourceFile(.{
+        .file = zgpu_dep.path("src/dawn.cpp"),
+        .flags = &.{ "-std=c++17", "-fno-sanitize=undefined" },
+    });
+    embed_check_exe.addCSourceFile(.{
+        .file = zgpu_dep.path("src/dawn_proc.c"),
+        .flags = &.{"-fno-sanitize=undefined"},
+    });
+    zgpu_build.addLibraryPathsTo(embed_check_exe);
+    zgpu_build.linkSystemDeps(b, embed_check_exe);
+    embed_check_exe.linkSystemLibrary("dawn");
+    embed_check_exe.linkLibC();
+    if (target.result.abi != .msvc)
+        embed_check_exe.linkLibCpp();
+
+    const run_embed_check = b.addRunArtifact(embed_check_exe);
+    const embed_check_step = b.step("embed-check", "Run @embedFile library API check");
+    embed_check_step.dependOn(&run_embed_check.step);
+
     // --- Tests ---
     const lib_unit_tests = b.addTest(.{
         .root_module = b.createModule(.{

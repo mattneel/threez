@@ -16,18 +16,30 @@ const EventBridge = @import("event_bridge.zig").EventBridge;
 
 const log = std.log.scoped(.runtime);
 
+pub const ErrorMode = enum {
+    resilient,
+    fail_fast,
+};
+
 pub const RuntimeConfig = struct {
     width: u32 = 1280,
     height: u32 = 720,
     title: [:0]const u8 = "threez",
     max_handles: u32 = HandleTable.default_capacity,
+    assets_dir: ?[]const u8 = null,
     script_dir: []const u8 = ".",
     source_name: []const u8 = "<script>",
+    error_mode: ErrorMode = .resilient,
 };
 
 const CallbackState = struct {
     event_bridge: *EventBridge,
     gpu_bridge: *GpuBridge,
+};
+
+const PromiseTrackerState = struct {
+    fail_fast: bool,
+    had_unhandled_rejection: bool = false,
 };
 
 pub const Runtime = struct {
@@ -40,6 +52,8 @@ pub const Runtime = struct {
     event_loop: EventLoop,
     event_bridge: EventBridge,
     callback_state: CallbackState,
+    error_mode: ErrorMode,
+    promise_state: PromiseTrackerState,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -55,7 +69,11 @@ pub const Runtime = struct {
 
         var engine = try JsEngine.init(allocator);
         errdefer engine.deinit();
-        engine.runtime.setHostPromiseRejectionTracker(void, {}, &promiseRejectionTracker);
+
+        var promise_state = PromiseTrackerState{
+            .fail_fast = config.error_mode == .fail_fast,
+        };
+        engine.runtime.setHostPromiseRejectionTracker(PromiseTrackerState, &promise_state, &promiseRejectionTracker);
 
         var timer_queue = TimerQueue.init(allocator);
         errdefer timer_queue.deinit(engine.context);
@@ -73,6 +91,7 @@ pub const Runtime = struct {
 
         var event_loop = EventLoop.init(allocator, &engine, &timer_queue);
         errdefer event_loop.deinit();
+        event_loop.setFailFast(config.error_mode == .fail_fast);
         try event_loop_mod.register(engine.context, &event_loop);
         try syncAnimationFrameGlobals(&engine);
 
@@ -81,35 +100,44 @@ pub const Runtime = struct {
             defer global.deinit(engine.context);
             break :blk global.getPropertyStr(engine.context, "window");
         };
-        errdefer js_window.deinit(engine.context);
+        var own_js_window = true;
+        defer if (own_js_window) js_window.deinit(engine.context);
 
         const js_document = blk: {
             const global = engine.context.getGlobalObject();
             defer global.deinit(engine.context);
             break :blk global.getPropertyStr(engine.context, "document");
         };
-        errdefer js_document.deinit(engine.context);
+        var own_js_document = true;
+        defer if (own_js_document) js_document.deinit(engine.context);
 
         const js_canvas = blk: {
             var canvas_result = engine.eval("document.createElement('canvas')", "<runtime>") catch {
+                clearPendingException(engine.context);
                 return error.BootstrapFailed;
             };
             const val = canvas_result.value;
             _ = &canvas_result;
             break :blk val;
         };
-        errdefer js_canvas.deinit(engine.context);
+        var own_js_canvas = true;
+        defer if (own_js_canvas) js_canvas.deinit(engine.context);
 
         var event_bridge = EventBridge.init(engine.context, js_window, js_document, js_canvas);
+        own_js_window = false;
+        own_js_document = false;
+        own_js_canvas = false;
         errdefer event_bridge.deinit();
 
-        try setScriptDir(engine.context, config.script_dir);
+        const runtime_script_dir = config.assets_dir orelse config.script_dir;
+        try setScriptDir(engine.context, runtime_script_dir);
 
         const source_name_z = try allocator.dupeZ(u8, config.source_name);
         defer allocator.free(source_name_z);
 
         log.info("evaluating '{s}'", .{config.source_name});
         var result = engine.eval(js_source, source_name_z) catch |err| {
+            clearPendingException(engine.context);
             log.err("JS exception loading '{s}': {}", .{ config.source_name, err });
             return err;
         };
@@ -137,6 +165,8 @@ pub const Runtime = struct {
             .event_loop = event_loop,
             .event_bridge = event_bridge,
             .callback_state = undefined,
+            .error_mode = config.error_mode,
+            .promise_state = promise_state,
         };
 
         runtime.gpu_bridge.handle_table_ptr = &runtime.handle_table;
@@ -149,6 +179,7 @@ pub const Runtime = struct {
         try runtime.gpu_bridge.register(runtime.engine.context);
         try event_loop_mod.register(runtime.engine.context, &runtime.event_loop);
         try syncAnimationFrameGlobals(&runtime.engine);
+        runtime.engine.runtime.setHostPromiseRejectionTracker(PromiseTrackerState, &runtime.promise_state, &promiseRejectionTracker);
 
         runtime.callback_state = .{
             .event_bridge = &runtime.event_bridge,
@@ -166,14 +197,20 @@ pub const Runtime = struct {
         return runtime;
     }
 
-    pub fn runLoop(self: *Runtime) void {
+    pub fn runLoop(self: *Runtime) !void {
         log.info("entering main loop", .{});
-        while (!self.window.shouldClose()) {
+        while (!self.window.shouldClose() and self.event_loop.running) {
             self.window.pollEvents();
             self.event_loop.tick();
             self.gpu_bridge.presentIfNeeded();
+            if (self.error_mode == .fail_fast and self.promise_state.had_unhandled_rejection) {
+                self.event_loop.stop();
+            }
         }
         log.info("main loop exited", .{});
+        if (self.error_mode == .fail_fast and (self.event_loop.hasFatalError() or self.promise_state.had_unhandled_rejection)) {
+            return error.StrictModeAbort;
+        }
     }
 
     pub fn deinit(self: *Runtime) void {
@@ -215,6 +252,7 @@ fn setWindowAndCanvasSize(engine: *JsEngine, width: u32, height: u32) !void {
         .{ width, height },
     ) catch unreachable;
     var r = engine.eval(set_size_js, "<runtime>") catch {
+        clearPendingException(engine.context);
         return error.BootstrapFailed;
     };
     r.deinit();
@@ -226,9 +264,15 @@ fn syncAnimationFrameGlobals(engine: *JsEngine) !void {
             "window.cancelAnimationFrame = cancelAnimationFrame;",
         "<runtime>",
     ) catch {
+        clearPendingException(engine.context);
         return error.BootstrapFailed;
     };
     r.deinit();
+}
+
+fn clearPendingException(ctx: *quickjs.Context) void {
+    const exc = ctx.getException();
+    exc.deinit(ctx);
 }
 
 fn glfwCursorPosCallback(glfw_win: *zglfw.Window, xpos: f64, ypos: f64) callconv(.c) void {
@@ -285,7 +329,7 @@ fn glfwCursorEnterCallback(glfw_win: *zglfw.Window, entered: c_int) callconv(.c)
 }
 
 fn promiseRejectionTracker(
-    _: void,
+    state_opt: ?*PromiseTrackerState,
     ctx: *quickjs.Context,
     _: quickjs.Value,
     reason: quickjs.Value,
@@ -293,11 +337,18 @@ fn promiseRejectionTracker(
 ) void {
     if (is_handled) return;
 
+    const state = state_opt orelse return;
+    state.had_unhandled_rejection = true;
+
     if (reason.toCString(ctx)) |msg| {
         log.err("unhandled promise rejection: {s}", .{std.mem.span(msg)});
         ctx.freeCString(msg);
     } else {
         log.err("unhandled promise rejection (non-string reason)", .{});
+    }
+
+    if (state.fail_fast) {
+        log.err("strict mode: aborting on unhandled promise rejection", .{});
     }
 }
 
