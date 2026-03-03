@@ -23,27 +23,40 @@ pub const HandleType = enum {
     query_set,
 };
 
-/// Placeholder tagged union — the real Dawn opaque pointers will be filled in
-/// once we integrate zgpu.
+/// Tagged union storing the opaque wgpu/Dawn pointer for each GPU object.
+/// Each variant holds a nullable `*anyopaque` that points to the real Dawn
+/// object (e.g. wgpu.Device, wgpu.Buffer). Null means the handle is a
+/// placeholder (used in tests or for pre-allocated stubs).
 pub const DawnHandle = union(HandleType) {
-    adapter: void,
-    device: void,
-    queue: void,
-    buffer: void,
-    texture: void,
-    texture_view: void,
-    sampler: void,
-    shader_module: void,
-    bind_group_layout: void,
-    bind_group: void,
-    pipeline_layout: void,
-    render_pipeline: void,
-    compute_pipeline: void,
-    command_encoder: void,
-    render_pass_encoder: void,
-    compute_pass_encoder: void,
-    command_buffer: void,
-    query_set: void,
+    adapter: ?*anyopaque,
+    device: ?*anyopaque,
+    queue: ?*anyopaque,
+    buffer: ?*anyopaque,
+    texture: ?*anyopaque,
+    texture_view: ?*anyopaque,
+    sampler: ?*anyopaque,
+    shader_module: ?*anyopaque,
+    bind_group_layout: ?*anyopaque,
+    bind_group: ?*anyopaque,
+    pipeline_layout: ?*anyopaque,
+    render_pipeline: ?*anyopaque,
+    compute_pipeline: ?*anyopaque,
+    command_encoder: ?*anyopaque,
+    render_pass_encoder: ?*anyopaque,
+    compute_pass_encoder: ?*anyopaque,
+    command_buffer: ?*anyopaque,
+    query_set: ?*anyopaque,
+
+    /// Extract the stored opaque pointer, cast to the expected wgpu type.
+    /// Returns null if the pointer was a placeholder.
+    pub fn as(self: DawnHandle, comptime T: type) ?T {
+        const raw: ?*anyopaque = switch (self) {
+            inline else => |ptr| ptr,
+        };
+        const opaque_ptr = raw orelse return null;
+        // wgpu types are `*opaque {}` — just cast the raw pointer.
+        return @ptrCast(opaque_ptr);
+    }
 };
 
 pub const HandleId = packed struct(u48) {
@@ -95,7 +108,7 @@ pub const HandleTable = struct {
         // Build the intrusive free list: 0 -> 1 -> 2 -> ... -> (capacity-1) -> null
         for (entries, 0..) |*entry, i| {
             entry.* = .{
-                .handle = .{ .adapter = {} },
+                .handle = .{ .adapter = null },
                 .handle_type = .adapter,
                 .generation = 0,
                 .alive = false,
@@ -216,7 +229,7 @@ test "alloc and get round-trip" {
     var table = try HandleTable.init(testing.allocator, 8);
     defer table.deinit(testing.allocator);
 
-    const id = try table.alloc(.{ .device = {} });
+    const id = try table.alloc(.{ .device = null });
     const entry = try table.get(id);
 
     try testing.expectEqual(HandleType.device, entry.handle_type);
@@ -229,13 +242,13 @@ test "free and realloc reuses slot with bumped generation" {
     var table = try HandleTable.init(testing.allocator, 8);
     defer table.deinit(testing.allocator);
 
-    const id1 = try table.alloc(.{ .buffer = {} });
+    const id1 = try table.alloc(.{ .buffer = null });
     const gen1 = id1.generation;
     const idx1 = id1.index;
 
     try table.free(id1);
 
-    const id2 = try table.alloc(.{ .texture = {} });
+    const id2 = try table.alloc(.{ .texture = null });
 
     // LIFO free list: should get the same slot back.
     try testing.expectEqual(idx1, id2.index);
@@ -251,11 +264,11 @@ test "stale handle returns StaleGeneration" {
     var table = try HandleTable.init(testing.allocator, 8);
     defer table.deinit(testing.allocator);
 
-    const id = try table.alloc(.{ .adapter = {} });
+    const id = try table.alloc(.{ .adapter = null });
     try table.free(id);
 
     // Re-allocate so the slot is alive again but with a new generation.
-    _ = try table.alloc(.{ .queue = {} });
+    _ = try table.alloc(.{ .queue = null });
 
     const result = table.get(id);
     try testing.expectError(HandleError.StaleGeneration, result);
@@ -266,7 +279,7 @@ test "double free returns HandleNotAlive" {
     var table = try HandleTable.init(testing.allocator, 8);
     defer table.deinit(testing.allocator);
 
-    const id = try table.alloc(.{ .sampler = {} });
+    const id = try table.alloc(.{ .sampler = null });
     try table.free(id);
 
     // The generation was bumped on free, so the old id has a stale generation.
@@ -279,7 +292,7 @@ test "destroy marks destroyed flag but keeps handle alive" {
     var table = try HandleTable.init(testing.allocator, 8);
     defer table.deinit(testing.allocator);
 
-    const id = try table.alloc(.{ .shader_module = {} });
+    const id = try table.alloc(.{ .shader_module = null });
     try table.destroy(id);
 
     const entry = try table.get(id);
@@ -293,7 +306,7 @@ test "destroy then free releases slot" {
     var table = try HandleTable.init(testing.allocator, 8);
     defer table.deinit(testing.allocator);
 
-    const id = try table.alloc(.{ .bind_group = {} });
+    const id = try table.alloc(.{ .bind_group = null });
     try testing.expectEqual(@as(u32, 1), table.activeCount());
 
     try table.destroy(id);
@@ -309,7 +322,7 @@ test "double destroy returns HandleAlreadyDestroyed" {
     var table = try HandleTable.init(testing.allocator, 8);
     defer table.deinit(testing.allocator);
 
-    const id = try table.alloc(.{ .render_pipeline = {} });
+    const id = try table.alloc(.{ .render_pipeline = null });
     try table.destroy(id);
 
     const result = table.destroy(id);
@@ -321,10 +334,10 @@ test "alloc beyond capacity returns OutOfHandles" {
     var table = try HandleTable.init(testing.allocator, 2);
     defer table.deinit(testing.allocator);
 
-    _ = try table.alloc(.{ .adapter = {} });
-    _ = try table.alloc(.{ .device = {} });
+    _ = try table.alloc(.{ .adapter = null });
+    _ = try table.alloc(.{ .device = null });
 
-    const result = table.alloc(.{ .queue = {} });
+    const result = table.alloc(.{ .queue = null });
     try testing.expectError(HandleError.OutOfHandles, result);
 }
 
@@ -333,9 +346,9 @@ test "multiple handles are independent" {
     var table = try HandleTable.init(testing.allocator, 8);
     defer table.deinit(testing.allocator);
 
-    const id_a = try table.alloc(.{ .adapter = {} });
-    const id_b = try table.alloc(.{ .buffer = {} });
-    const id_c = try table.alloc(.{ .command_encoder = {} });
+    const id_a = try table.alloc(.{ .adapter = null });
+    const id_b = try table.alloc(.{ .buffer = null });
+    const id_c = try table.alloc(.{ .command_encoder = null });
 
     try testing.expectEqual(HandleType.adapter, (try table.get(id_a)).handle_type);
     try testing.expectEqual(HandleType.buffer, (try table.get(id_b)).handle_type);
@@ -348,9 +361,9 @@ test "free list ordering returns most recently freed slot" {
     var table = try HandleTable.init(testing.allocator, 8);
     defer table.deinit(testing.allocator);
 
-    const id0 = try table.alloc(.{ .adapter = {} });
-    const id1 = try table.alloc(.{ .device = {} });
-    const id2 = try table.alloc(.{ .queue = {} });
+    const id0 = try table.alloc(.{ .adapter = null });
+    const id1 = try table.alloc(.{ .device = null });
+    const id2 = try table.alloc(.{ .queue = null });
     _ = id0;
     _ = id2;
 
@@ -358,7 +371,7 @@ test "free list ordering returns most recently freed slot" {
     try table.free(id1);
 
     // Allocate — LIFO should return the middle slot (index 1).
-    const id_new = try table.alloc(.{ .texture = {} });
+    const id_new = try table.alloc(.{ .texture = null });
     try testing.expectEqual(id1.index, id_new.index);
     try testing.expectEqual(id1.generation +% 1, id_new.generation);
 }
@@ -377,7 +390,7 @@ test "isValid returns false after free" {
     var table = try HandleTable.init(testing.allocator, 4);
     defer table.deinit(testing.allocator);
 
-    const id = try table.alloc(.{ .texture_view = {} });
+    const id = try table.alloc(.{ .texture_view = null });
     try testing.expect(table.isValid(id));
 
     try table.free(id);
@@ -392,13 +405,13 @@ test "generation wraps around on overflow" {
     // Artificially set generation close to max.
     table.entries[0].generation = std.math.maxInt(u16);
 
-    const id = try table.alloc(.{ .adapter = {} });
+    const id = try table.alloc(.{ .adapter = null });
     try testing.expectEqual(std.math.maxInt(u16), id.generation);
 
     try table.free(id);
 
     // Next alloc on same slot should have wrapped generation (0).
-    const id2 = try table.alloc(.{ .adapter = {} });
+    const id2 = try table.alloc(.{ .adapter = null });
     try testing.expectEqual(id.index, id2.index);
     try testing.expectEqual(@as(u16, 0), id2.generation);
 }
@@ -409,7 +422,7 @@ test "zero capacity table returns OutOfHandles immediately" {
     defer table.deinit(testing.allocator);
 
     try testing.expectEqual(@as(u32, 0), table.activeCount());
-    try testing.expectError(HandleError.OutOfHandles, table.alloc(.{ .adapter = {} }));
+    try testing.expectError(HandleError.OutOfHandles, table.alloc(.{ .adapter = null }));
 }
 
 // ---- HandleId pack/unpack tests --------------------------------------------

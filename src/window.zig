@@ -2,6 +2,8 @@ const std = @import("std");
 const zgpu = @import("zgpu");
 const zglfw = @import("zglfw");
 
+const log = std.log.scoped(.window);
+
 pub const WindowConfig = struct {
     width: u32 = 1280,
     height: u32 = 720,
@@ -16,7 +18,8 @@ pub const Window = struct {
     /// Create a GLFW window backed by a zgpu GraphicsContext (Dawn/WebGPU).
     /// The GraphicsContext owns the GPU instance, device, surface, and swapchain.
     pub fn init(allocator: std.mem.Allocator, config: WindowConfig) !Window {
-        // Initialise GLFW
+        // Initialise GLFW — force X11 on Linux (Wayland+Vulkan doesn't present on WSLg)
+        try zglfw.initHint(.platform, zglfw.Platform.x11);
         try zglfw.init();
         errdefer zglfw.terminate();
 
@@ -47,7 +50,17 @@ pub const Window = struct {
 
         // Create the zgpu GraphicsContext — this creates instance, adapter,
         // device, surface, and swapchain all in one call.
+        log.info("GLFW window created {}x{}", .{ config.width, config.height });
+
         const gctx = try zgpu.GraphicsContext.create(allocator, window_provider, .{});
+
+        // Ensure the window is visible and focused (WSLg/Wayland may not show by default)
+        glfw_window.show();
+        glfw_window.focus();
+
+        const fb = glfw_window.getFramebufferSize();
+        const visible = zglfw.getWindowAttributeUntyped(glfw_window, .visible);
+        log.info("GPU context ready, framebuffer {}x{}, visible={}", .{ fb[0], fb[1], visible });
 
         return .{
             .glfw_window = glfw_window,

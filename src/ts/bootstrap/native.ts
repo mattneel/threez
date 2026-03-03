@@ -58,6 +58,10 @@ export interface NativeBridge {
   gpuCreateTextureView?(textureId: number, descriptor?: object): number;
   /** Create a GPU sampler, returning an opaque handle ID. */
   gpuCreateSampler?(deviceId: number, descriptor?: object): number;
+  /** Unmap a previously mapped GPU buffer. */
+  gpuBufferUnmap?(bufferId: number): void;
+  /** Get the mapped range of a buffer as an ArrayBuffer (zero-copy). */
+  gpuBufferGetMappedRange?(bufferId: number, offset: number, size: number): ArrayBuffer | null;
   /** Destroy a GPU buffer, releasing its handle. */
   gpuDestroyBuffer?(bufferId: number): void;
   /** Destroy a GPU texture, releasing its handle. */

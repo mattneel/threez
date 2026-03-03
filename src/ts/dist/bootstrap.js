@@ -1,14 +1,8 @@
 "use strict";
 var __bootstrap = (() => {
-  var __defProp = Object.defineProperty;
-  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-  var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-
   // bootstrap/event-target.ts
   var EventTarget = class {
-    constructor() {
-      __publicField(this, "_listeners", /* @__PURE__ */ new Map());
-    }
+    _listeners = /* @__PURE__ */ new Map();
     addEventListener(type, callback, options) {
       if (callback === null) return;
       const { capture, once, passive } = normalizeOptions(options);
@@ -75,30 +69,30 @@ var __bootstrap = (() => {
 
   // bootstrap/events.ts
   var Event = class {
-    constructor(type, init) {
-      __publicField(this, "type");
-      __publicField(this, "bubbles");
-      __publicField(this, "cancelable");
-      __publicField(this, "timeStamp");
-      __publicField(this, "defaultPrevented", false);
-      /** @internal set by EventTarget.dispatchEvent */
-      __publicField(this, "_target", null);
-      /** @internal set by EventTarget.dispatchEvent */
-      __publicField(this, "_currentTarget", null);
-      /** @internal */
-      __publicField(this, "_stopProp", false);
-      /** @internal */
-      __publicField(this, "_stopImmediate", false);
-      this.type = type;
-      this.bubbles = init?.bubbles ?? false;
-      this.cancelable = init?.cancelable ?? false;
-      this.timeStamp = Date.now();
-    }
+    type;
+    bubbles;
+    cancelable;
+    timeStamp;
+    defaultPrevented = false;
+    /** @internal set by EventTarget.dispatchEvent */
+    _target = null;
+    /** @internal set by EventTarget.dispatchEvent */
+    _currentTarget = null;
+    /** @internal */
+    _stopProp = false;
+    /** @internal */
+    _stopImmediate = false;
     get target() {
       return this._target;
     }
     get currentTarget() {
       return this._currentTarget;
+    }
+    constructor(type, init) {
+      this.type = type;
+      this.bubbles = init?.bubbles ?? false;
+      this.cancelable = init?.cancelable ?? false;
+      this.timeStamp = Date.now();
     }
     preventDefault() {
       if (this.cancelable) {
@@ -114,16 +108,16 @@ var __bootstrap = (() => {
     }
   };
   var PointerEvent = class extends Event {
+    clientX;
+    clientY;
+    movementX;
+    movementY;
+    button;
+    buttons;
+    pointerId;
+    pointerType;
     constructor(type, init) {
       super(type, init);
-      __publicField(this, "clientX");
-      __publicField(this, "clientY");
-      __publicField(this, "movementX");
-      __publicField(this, "movementY");
-      __publicField(this, "button");
-      __publicField(this, "buttons");
-      __publicField(this, "pointerId");
-      __publicField(this, "pointerType");
       this.clientX = init?.clientX ?? 0;
       this.clientY = init?.clientY ?? 0;
       this.movementX = init?.movementX ?? 0;
@@ -135,12 +129,12 @@ var __bootstrap = (() => {
     }
   };
   var WheelEvent = class extends Event {
+    deltaX;
+    deltaY;
+    deltaZ;
+    deltaMode;
     constructor(type, init) {
       super(type, init);
-      __publicField(this, "deltaX");
-      __publicField(this, "deltaY");
-      __publicField(this, "deltaZ");
-      __publicField(this, "deltaMode");
       this.deltaX = init?.deltaX ?? 0;
       this.deltaY = init?.deltaY ?? 0;
       this.deltaZ = init?.deltaZ ?? 0;
@@ -148,15 +142,15 @@ var __bootstrap = (() => {
     }
   };
   var KeyboardEvent = class extends Event {
+    key;
+    code;
+    altKey;
+    ctrlKey;
+    metaKey;
+    shiftKey;
+    repeat;
     constructor(type, init) {
       super(type, init);
-      __publicField(this, "key");
-      __publicField(this, "code");
-      __publicField(this, "altKey");
-      __publicField(this, "ctrlKey");
-      __publicField(this, "metaKey");
-      __publicField(this, "shiftKey");
-      __publicField(this, "repeat");
       this.key = init?.key ?? "";
       this.code = init?.code ?? "";
       this.altKey = init?.altKey ?? false;
@@ -173,12 +167,24 @@ var __bootstrap = (() => {
   }
 
   // bootstrap/gpu.ts
+  function unwrapHandles(obj) {
+    if (obj === null || obj === void 0) return obj;
+    if (typeof obj !== "object") return obj;
+    if (typeof obj._handle === "number") return obj._handle;
+    if (ArrayBuffer.isView(obj) || obj instanceof ArrayBuffer) return obj;
+    if (Array.isArray(obj)) return obj.map(unwrapHandles);
+    const result = {};
+    for (const key of Object.keys(obj)) {
+      result[key] = unwrapHandles(obj[key]);
+    }
+    return result;
+  }
   var GPUBuffer = class {
+    _handle;
+    _device;
+    size;
+    usage;
     constructor(handle, device, size, usage) {
-      __publicField(this, "_handle");
-      __publicField(this, "_device");
-      __publicField(this, "size");
-      __publicField(this, "usage");
       this._handle = handle;
       this._device = device;
       this.size = size;
@@ -186,10 +192,18 @@ var __bootstrap = (() => {
     }
     async mapAsync(_mode, _offset, _size) {
     }
-    getMappedRange(_offset, _size) {
-      return new ArrayBuffer(_size ?? this.size);
+    getMappedRange(offset, size) {
+      const native = getNative();
+      const ab = native?.gpuBufferGetMappedRange?.(this._handle, offset ?? 0, size ?? this.size);
+      if (ab) return ab;
+      return new ArrayBuffer(size ?? this.size);
+    }
+    get mapState() {
+      return "unmapped";
     }
     unmap() {
+      const native = getNative();
+      native?.gpuBufferUnmap?.(this._handle);
     }
     destroy() {
       const native = getNative();
@@ -197,23 +211,23 @@ var __bootstrap = (() => {
     }
   };
   var GPUTextureView = class {
+    _handle;
     constructor(handle) {
-      __publicField(this, "_handle");
       this._handle = handle;
     }
   };
   var GPUTexture = class {
+    _handle;
+    _device;
+    width;
+    height;
+    depthOrArrayLayers;
+    mipLevelCount;
+    sampleCount;
+    dimension;
+    format;
+    usage;
     constructor(handle, device, descriptor) {
-      __publicField(this, "_handle");
-      __publicField(this, "_device");
-      __publicField(this, "width");
-      __publicField(this, "height");
-      __publicField(this, "depthOrArrayLayers");
-      __publicField(this, "mipLevelCount");
-      __publicField(this, "sampleCount");
-      __publicField(this, "dimension");
-      __publicField(this, "format");
-      __publicField(this, "usage");
       this._handle = handle;
       this._device = device;
       this.width = descriptor?.width ?? 0;
@@ -236,11 +250,9 @@ var __bootstrap = (() => {
     }
   };
   var GPUCanvasContext = class {
-    constructor() {
-      __publicField(this, "_configured", false);
-      __publicField(this, "_device", null);
-      __publicField(this, "_format", "bgra8unorm");
-    }
+    _configured = false;
+    _device = null;
+    _format = "bgra8unorm";
     configure(config) {
       this._device = config.device;
       this._format = config.format ?? "bgra8unorm";
@@ -271,38 +283,38 @@ var __bootstrap = (() => {
     }
   };
   var GPUSampler = class {
+    _handle;
     constructor(handle) {
-      __publicField(this, "_handle");
       this._handle = handle;
     }
   };
   var GPUShaderModule = class {
+    _handle;
     constructor(handle) {
-      __publicField(this, "_handle");
       this._handle = handle;
     }
   };
   var GPUBindGroupLayout = class {
+    _handle;
     constructor(handle) {
-      __publicField(this, "_handle");
       this._handle = handle;
     }
   };
   var GPUPipelineLayout = class {
+    _handle;
     constructor(handle) {
-      __publicField(this, "_handle");
       this._handle = handle;
     }
   };
   var GPUBindGroup = class {
+    _handle;
     constructor(handle) {
-      __publicField(this, "_handle");
       this._handle = handle;
     }
   };
   var GPURenderPipeline = class {
+    _handle;
     constructor(handle) {
-      __publicField(this, "_handle");
       this._handle = handle;
     }
     getBindGroupLayout(index) {
@@ -312,8 +324,8 @@ var __bootstrap = (() => {
     }
   };
   var GPUComputePipeline = class {
+    _handle;
     constructor(handle) {
-      __publicField(this, "_handle");
       this._handle = handle;
     }
     getBindGroupLayout(index) {
@@ -323,9 +335,9 @@ var __bootstrap = (() => {
     }
   };
   var GPUQuerySet = class {
+    type;
+    count;
     constructor(type, count) {
-      __publicField(this, "type");
-      __publicField(this, "count");
       this.type = type;
       this.count = count;
     }
@@ -333,14 +345,14 @@ var __bootstrap = (() => {
     }
   };
   var GPUCommandBuffer = class {
+    _handle;
     constructor(handle) {
-      __publicField(this, "_handle");
       this._handle = handle;
     }
   };
   var GPURenderPassEncoder = class {
+    _handle;
     constructor(handle) {
-      __publicField(this, "_handle");
       this._handle = handle;
     }
     setPipeline(pipeline) {
@@ -387,8 +399,8 @@ var __bootstrap = (() => {
     }
   };
   var GPUComputePassEncoder = class {
+    _handle;
     constructor(handle) {
-      __publicField(this, "_handle");
       this._handle = handle;
     }
     setPipeline(pipeline) {
@@ -407,13 +419,13 @@ var __bootstrap = (() => {
     }
   };
   var GPUCommandEncoder = class {
+    _handle;
     constructor(handle) {
-      __publicField(this, "_handle");
       this._handle = handle;
     }
     beginRenderPass(descriptor) {
       const native = getNative();
-      const handle = native?.gpuCommandEncoderBeginRenderPass?.(this._handle, descriptor) ?? 0;
+      const handle = native?.gpuCommandEncoderBeginRenderPass?.(this._handle, unwrapHandles(descriptor)) ?? 0;
       return new GPURenderPassEncoder(handle);
     }
     beginComputePass(_descriptor) {
@@ -438,8 +450,8 @@ var __bootstrap = (() => {
     }
   };
   var GPUQueue = class {
+    _handle;
     constructor(handle) {
-      __publicField(this, "_handle");
       this._handle = handle;
     }
     submit(commandBuffers) {
@@ -453,19 +465,19 @@ var __bootstrap = (() => {
     }
     writeTexture(destination, data, dataLayout, size) {
       const native = getNative();
-      native?.gpuQueueWriteTexture?.(this._handle, destination, data, dataLayout, size);
+      native?.gpuQueueWriteTexture?.(this._handle, unwrapHandles(destination), data, dataLayout, size);
     }
     copyExternalImageToTexture(_source, _destination, _copySize) {
     }
   };
   var GPUDevice = class extends EventTarget {
+    _handle;
+    queue;
+    features;
+    limits;
+    lost;
     constructor(handle) {
       super();
-      __publicField(this, "_handle");
-      __publicField(this, "queue");
-      __publicField(this, "features");
-      __publicField(this, "limits");
-      __publicField(this, "lost");
       const native = getNative();
       const queueHandle = native?.gpuGetQueue?.(handle) ?? 0;
       this._handle = handle;
@@ -575,22 +587,22 @@ var __bootstrap = (() => {
     }
     createPipelineLayout(descriptor) {
       const native = getNative();
-      const handle = native?.gpuCreatePipelineLayout?.(this._handle, descriptor) ?? 0;
+      const handle = native?.gpuCreatePipelineLayout?.(this._handle, unwrapHandles(descriptor)) ?? 0;
       return new GPUPipelineLayout(handle);
     }
     createRenderPipeline(descriptor) {
       const native = getNative();
-      const handle = native?.gpuCreateRenderPipeline?.(this._handle, descriptor) ?? 0;
+      const handle = native?.gpuCreateRenderPipeline?.(this._handle, unwrapHandles(descriptor)) ?? 0;
       return new GPURenderPipeline(handle);
     }
     createComputePipeline(descriptor) {
       const native = getNative();
-      const handle = native?.gpuCreateComputePipeline?.(this._handle, descriptor) ?? 0;
+      const handle = native?.gpuCreateComputePipeline?.(this._handle, unwrapHandles(descriptor)) ?? 0;
       return new GPUComputePipeline(handle);
     }
     createBindGroup(descriptor) {
       const native = getNative();
-      const handle = native?.gpuCreateBindGroup?.(this._handle, descriptor) ?? 0;
+      const handle = native?.gpuCreateBindGroup?.(this._handle, unwrapHandles(descriptor)) ?? 0;
       return new GPUBindGroup(handle);
     }
     createQuerySet(descriptor) {
@@ -615,8 +627,8 @@ var __bootstrap = (() => {
     }
   };
   var GPUAdapter = class {
+    _handle;
     constructor(handle) {
-      __publicField(this, "_handle");
       this._handle = handle;
     }
     async requestDevice(_descriptor) {
@@ -691,11 +703,11 @@ var __bootstrap = (() => {
 
   // bootstrap/image.ts
   var ImageBitmap = class {
+    width;
+    height;
+    _data;
     // RGBA pixels
     constructor(width, height, data) {
-      __publicField(this, "width");
-      __publicField(this, "height");
-      __publicField(this, "_data");
       this.width = width;
       this.height = height;
       this._data = data;
@@ -704,18 +716,15 @@ var __bootstrap = (() => {
     }
   };
   var ImageElement = class extends EventTarget {
-    constructor() {
-      super(...arguments);
-      __publicField(this, "width", 0);
-      __publicField(this, "height", 0);
-      __publicField(this, "_src", "");
-      __publicField(this, "_data", null);
-      __publicField(this, "_complete", false);
-      __publicField(this, "crossOrigin", null);
-      // Callback-style event handlers (Three.js uses these)
-      __publicField(this, "onload", null);
-      __publicField(this, "onerror", null);
-    }
+    width = 0;
+    height = 0;
+    _src = "";
+    _data = null;
+    _complete = false;
+    crossOrigin = null;
+    // Callback-style event handlers (Three.js uses these)
+    onload = null;
+    onerror = null;
     get src() {
       return this._src;
     }
@@ -819,14 +828,11 @@ var __bootstrap = (() => {
 
   // bootstrap/dom.ts
   var CanvasStub = class extends EventTarget {
-    constructor() {
-      super(...arguments);
-      __publicField(this, "width", 800);
-      __publicField(this, "height", 600);
-      __publicField(this, "style", {});
-      __publicField(this, "_attributes", /* @__PURE__ */ new Map());
-      __publicField(this, "_gpuContext", null);
-    }
+    width = 800;
+    height = 600;
+    style = {};
+    _attributes = /* @__PURE__ */ new Map();
+    _gpuContext = null;
     getContext(contextId) {
       if (contextId === "webgpu") {
         if (!this._gpuContext) {
@@ -871,13 +877,13 @@ var __bootstrap = (() => {
     };
   }
   var DocumentStub = class extends EventTarget {
+    body = new EventTarget();
+    documentElement = new EventTarget();
+    visibilityState = "visible";
+    hidden = false;
+    _canvas;
     constructor(canvas) {
       super();
-      __publicField(this, "body", new EventTarget());
-      __publicField(this, "documentElement", new EventTarget());
-      __publicField(this, "visibilityState", "visible");
-      __publicField(this, "hidden", false);
-      __publicField(this, "_canvas");
       this._canvas = canvas;
     }
     createElement(tagName) {
@@ -911,14 +917,14 @@ var __bootstrap = (() => {
     }
   };
   var WindowStub = class extends EventTarget {
+    innerWidth = 800;
+    innerHeight = 600;
+    devicePixelRatio = 1;
+    navigator;
+    document;
+    _rafId = 0;
     constructor(document, navigator) {
       super();
-      __publicField(this, "innerWidth", 800);
-      __publicField(this, "innerHeight", 600);
-      __publicField(this, "devicePixelRatio", 1);
-      __publicField(this, "navigator");
-      __publicField(this, "document");
-      __publicField(this, "_rafId", 0);
       this.document = document;
       this.navigator = navigator;
     }
@@ -987,8 +993,8 @@ var __bootstrap = (() => {
     }
   }
   var FetchHeaders = class {
+    _map = {};
     constructor(init) {
-      __publicField(this, "_map", {});
       if (init) {
         for (const key of Object.keys(init)) {
           this._map[key.toLowerCase()] = init[key];
@@ -1006,13 +1012,13 @@ var __bootstrap = (() => {
     }
   };
   var FetchResponse = class {
+    ok;
+    status;
+    statusText;
+    url;
+    headers;
+    _body;
     constructor(body, status, statusText, url, headers) {
-      __publicField(this, "ok");
-      __publicField(this, "status");
-      __publicField(this, "statusText");
-      __publicField(this, "url");
-      __publicField(this, "headers");
-      __publicField(this, "_body");
       this._body = body;
       this.ok = status >= 200 && status < 300;
       this.status = status;
@@ -1221,13 +1227,10 @@ var __bootstrap = (() => {
 
   // bootstrap/abort.ts
   var AbortSignal = class _AbortSignal extends EventTarget {
-    constructor() {
-      super(...arguments);
-      __publicField(this, "aborted", false);
-      __publicField(this, "reason");
-      // Callback-style handler (used by some code paths)
-      __publicField(this, "onabort", null);
-    }
+    aborted = false;
+    reason = void 0;
+    // Callback-style handler (used by some code paths)
+    onabort = null;
     throwIfAborted() {
       if (this.aborted) {
         throw this.reason;
@@ -1268,17 +1271,17 @@ var __bootstrap = (() => {
     }
   };
   var DOMException = class extends Error {
+    name;
+    code;
     constructor(message, name) {
       super(message ?? "");
-      __publicField(this, "name");
-      __publicField(this, "code");
       this.name = name ?? "Error";
       this.code = 0;
     }
   };
   var AbortController = class {
+    signal;
     constructor() {
-      __publicField(this, "signal");
       this.signal = new AbortSignal();
     }
     abort(reason) {
@@ -1294,8 +1297,8 @@ var __bootstrap = (() => {
 
   // bootstrap/request.ts
   var Headers = class _Headers {
+    _map = /* @__PURE__ */ new Map();
     constructor(init) {
-      __publicField(this, "_map", /* @__PURE__ */ new Map());
       if (init) {
         if (init instanceof _Headers) {
           init.forEach((value, name) => {
@@ -1348,18 +1351,18 @@ var __bootstrap = (() => {
     }
   };
   var Request = class _Request {
+    url;
+    method;
+    headers;
+    signal;
+    mode;
+    credentials;
+    cache;
+    redirect;
+    referrer;
+    integrity;
+    body;
     constructor(input, init) {
-      __publicField(this, "url");
-      __publicField(this, "method");
-      __publicField(this, "headers");
-      __publicField(this, "signal");
-      __publicField(this, "mode");
-      __publicField(this, "credentials");
-      __publicField(this, "cache");
-      __publicField(this, "redirect");
-      __publicField(this, "referrer");
-      __publicField(this, "integrity");
-      __publicField(this, "body");
       if (typeof input === "string") {
         this.url = input;
       } else {
@@ -1404,9 +1407,9 @@ var __bootstrap = (() => {
   g.KeyboardEvent = KeyboardEvent;
   g.EventTarget = EventTarget;
   var CustomEvent = class extends Event {
+    detail;
     constructor(type, init) {
       super(type, init);
-      __publicField(this, "detail");
       this.detail = init?.detail ?? null;
     }
   };
@@ -1422,17 +1425,17 @@ var __bootstrap = (() => {
   installAbort();
   installRequest();
   var URLPolyfill = class {
+    href;
+    origin;
+    protocol;
+    host;
+    hostname;
+    port;
+    pathname;
+    search;
+    hash;
+    searchParams;
     constructor(url, base) {
-      __publicField(this, "href");
-      __publicField(this, "origin");
-      __publicField(this, "protocol");
-      __publicField(this, "host");
-      __publicField(this, "hostname");
-      __publicField(this, "port");
-      __publicField(this, "pathname");
-      __publicField(this, "search");
-      __publicField(this, "hash");
-      __publicField(this, "searchParams");
       let resolved = url;
       if (base && !url.includes("://") && !url.startsWith("data:")) {
         if (url.startsWith("/")) {
@@ -1505,8 +1508,8 @@ var __bootstrap = (() => {
   }
   if (typeof g.URLSearchParams === "undefined") {
     g.URLSearchParams = class URLSearchParams {
+      _entries = [];
       constructor(_init) {
-        __publicField(this, "_entries", []);
       }
       get(_name) {
         return null;

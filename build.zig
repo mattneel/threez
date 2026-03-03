@@ -32,6 +32,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
         .use_llvm = true,
+        .use_lld = false,
     });
 
     // --- Dependencies ---
@@ -124,8 +125,28 @@ pub fn build(b: *std.Build) void {
         // QuickJS Value is an extern struct; the default backend cannot
         // lower its return type yet (Zig compiler TODO), so use LLVM.
         .use_llvm = true,
+        .use_lld = false,
     });
     lib_unit_tests.linkLibrary(qjs_lib);
+
+    // Dawn/WebGPU native linking for tests (gpu_bridge.zig imports zgpu)
+    lib_unit_tests.addIncludePath(zgpu_dep.path("libs/dawn/include"));
+    lib_unit_tests.addIncludePath(zgpu_dep.path("src"));
+    lib_unit_tests.addCSourceFile(.{
+        .file = zgpu_dep.path("src/dawn.cpp"),
+        .flags = &.{ "-std=c++17", "-fno-sanitize=undefined" },
+    });
+    lib_unit_tests.addCSourceFile(.{
+        .file = zgpu_dep.path("src/dawn_proc.c"),
+        .flags = &.{"-fno-sanitize=undefined"},
+    });
+    zgpu_build.addLibraryPathsTo(lib_unit_tests);
+    zgpu_build.linkSystemDeps(b, lib_unit_tests);
+    lib_unit_tests.linkSystemLibrary("dawn");
+    lib_unit_tests.linkLibC();
+    if (target.result.abi != .msvc)
+        lib_unit_tests.linkLibCpp();
+    lib_unit_tests.linkLibrary(zglfw_dep.artifact("glfw"));
 
     // Add lazy dependencies to the test module so tests can use them
     if (b.lazyDependency("zignal", .{})) |zignal_dep| {
@@ -148,6 +169,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
         .use_llvm = true,
+        .use_lld = false,
     });
     exe_unit_tests.linkLibrary(qjs_lib);
 

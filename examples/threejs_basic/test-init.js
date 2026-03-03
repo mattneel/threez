@@ -102,9 +102,9 @@ async function runTest() {
         console.error("renderer.init() failed:", e.message);
       }
 
-      // Attempt setSize
+      // Attempt setSize — use actual window dimensions to match swap chain
       try {
-        renderer.setSize(800, 600);
+        renderer.setSize(window.innerWidth, window.innerHeight);
         console.log("renderer.setSize() succeeded");
       } catch (e) {
         accessLog.errors.push(`renderer.setSize(): ${e.message}`);
@@ -116,7 +116,7 @@ async function runTest() {
     let scene, camera, mesh;
     try {
       scene = new THREE.Scene();
-      camera = new THREE.PerspectiveCamera(75, 800 / 600, 0.1, 1000);
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
       camera.position.z = 5;
 
       const geometry = new THREE.BoxGeometry(1, 1, 1);

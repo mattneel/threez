@@ -10,6 +10,26 @@
 import { EventTarget } from "./event-target";
 import { getNative } from "./native";
 
+/**
+ * Recursively unwrap GPU objects (with _handle) to their numeric handle IDs.
+ * This is needed because the native Zig bridge expects plain numbers for
+ * handle references, but Three.js passes GPU* class instances in descriptors.
+ */
+function unwrapHandles(obj: any): any {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj !== "object") return obj;
+  // GPU objects have _handle — return just the number
+  if (typeof obj._handle === "number") return obj._handle;
+  // Don't traverse ArrayBuffer/TypedArray data
+  if (ArrayBuffer.isView(obj) || obj instanceof ArrayBuffer) return obj;
+  if (Array.isArray(obj)) return obj.map(unwrapHandles);
+  const result: Record<string, any> = {};
+  for (const key of Object.keys(obj)) {
+    result[key] = unwrapHandles(obj[key]);
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // GPUBuffer
 // ---------------------------------------------------------------------------
@@ -31,13 +51,20 @@ export class GPUBuffer {
     // Stub — real mapping requires async I/O bridge (future ticket)
   }
 
-  getMappedRange(_offset?: number, _size?: number): ArrayBuffer {
-    // Stub — returns empty buffer until mapping is wired
-    return new ArrayBuffer(_size ?? this.size);
+  getMappedRange(offset?: number, size?: number): ArrayBuffer {
+    const native = getNative();
+    const ab = native?.gpuBufferGetMappedRange?.(this._handle, offset ?? 0, size ?? this.size);
+    if (ab) return ab;
+    return new ArrayBuffer(size ?? this.size);
+  }
+
+  get mapState(): string {
+    return "unmapped"; // TODO: track real state
   }
 
   unmap(): void {
-    // Stub
+    const native = getNative();
+    native?.gpuBufferUnmap?.(this._handle);
   }
 
   destroy(): void {
@@ -377,7 +404,7 @@ export class GPUCommandEncoder {
 
   beginRenderPass(descriptor: object): GPURenderPassEncoder {
     const native = getNative();
-    const handle = native?.gpuCommandEncoderBeginRenderPass?.(this._handle, descriptor) as number ?? 0;
+    const handle = native?.gpuCommandEncoderBeginRenderPass?.(this._handle, unwrapHandles(descriptor)) as number ?? 0;
     return new GPURenderPassEncoder(handle);
   }
 
@@ -458,7 +485,7 @@ export class GPUQueue {
     size: object,
   ): void {
     const native = getNative();
-    native?.gpuQueueWriteTexture?.(this._handle, destination, data, dataLayout, size);
+    native?.gpuQueueWriteTexture?.(this._handle, unwrapHandles(destination), data, dataLayout, size);
   }
 
   copyExternalImageToTexture(
@@ -610,25 +637,25 @@ export class GPUDevice extends EventTarget {
 
   createPipelineLayout(descriptor: object): GPUPipelineLayout {
     const native = getNative();
-    const handle = native?.gpuCreatePipelineLayout?.(this._handle, descriptor) as number ?? 0;
+    const handle = native?.gpuCreatePipelineLayout?.(this._handle, unwrapHandles(descriptor)) as number ?? 0;
     return new GPUPipelineLayout(handle);
   }
 
   createRenderPipeline(descriptor: object): GPURenderPipeline {
     const native = getNative();
-    const handle = native?.gpuCreateRenderPipeline?.(this._handle, descriptor) as number ?? 0;
+    const handle = native?.gpuCreateRenderPipeline?.(this._handle, unwrapHandles(descriptor)) as number ?? 0;
     return new GPURenderPipeline(handle);
   }
 
   createComputePipeline(descriptor: object): GPUComputePipeline {
     const native = getNative();
-    const handle = native?.gpuCreateComputePipeline?.(this._handle, descriptor) as number ?? 0;
+    const handle = native?.gpuCreateComputePipeline?.(this._handle, unwrapHandles(descriptor)) as number ?? 0;
     return new GPUComputePipeline(handle);
   }
 
   createBindGroup(descriptor: object): GPUBindGroup {
     const native = getNative();
-    const handle = native?.gpuCreateBindGroup?.(this._handle, descriptor) as number ?? 0;
+    const handle = native?.gpuCreateBindGroup?.(this._handle, unwrapHandles(descriptor)) as number ?? 0;
     return new GPUBindGroup(handle);
   }
 

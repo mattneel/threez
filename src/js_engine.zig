@@ -1,6 +1,8 @@
 const std = @import("std");
 const quickjs = @import("quickjs");
 
+const log = std.log.scoped(.js);
+
 /// A high-level wrapper around the QuickJS-NG JavaScript engine.
 ///
 /// Manages a QuickJS Runtime and Context pair, providing a simple
@@ -38,6 +40,10 @@ pub const JsEngine = struct {
         const value = self.context.eval(source, filename, .{});
         if (value.isException()) {
             const exc = self.context.getException();
+            if (exc.toCString(self.context)) |msg| {
+                log.info("{s}", .{std.mem.span(msg)});
+                self.context.freeCString(msg);
+            }
             exc.deinit(self.context);
             return error.JSException;
         }
@@ -54,6 +60,10 @@ pub const JsEngine = struct {
         const value = self.context.eval(source, filename, .{ .type = .module });
         if (value.isException()) {
             const exc = self.context.getException();
+            if (exc.toCString(self.context)) |msg| {
+                log.info("{s}", .{std.mem.span(msg)});
+                self.context.freeCString(msg);
+            }
             exc.deinit(self.context);
             return error.JSException;
         }

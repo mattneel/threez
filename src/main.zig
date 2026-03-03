@@ -14,6 +14,8 @@ const HandleTable = @import("handle_table.zig").HandleTable;
 const GpuBridge = @import("gpu_bridge.zig").GpuBridge;
 const EventBridge = @import("event_bridge.zig").EventBridge;
 
+const log = std.log.scoped(.threez);
+
 const version_string = "0.1.0";
 
 // =============================================================================
@@ -86,7 +88,7 @@ pub fn main() !void {
             stderr.writeAll("threez " ++ version_string ++ "\n") catch {};
         },
         .run => runMain(allocator, &iter) catch |err| {
-            std.debug.print("error: {}\n", .{err});
+            log.err("run failed: {}", .{err});
             std.process.exit(1);
         },
     }
@@ -203,12 +205,23 @@ fn runScript(allocator: std.mem.Allocator, js_path: []const u8, config: RunConfi
     var handle_table = try HandleTable.init(allocator, config.max_handles);
     defer handle_table.deinit(allocator);
 
-    var gpu_bridge = try GpuBridge.init(&handle_table);
+    var gpu_bridge = try GpuBridge.init(&handle_table, window.gctx);
     defer gpu_bridge.deinit();
     try gpu_bridge.register(engine.context);
 
     // Run bootstrap (window, document, navigator, Event classes, etc.)
     try bootstrap.init(&engine);
+
+    // Set window dimensions to match actual GLFW window size
+    {
+        const size = window.getSize();
+        var set_size_buf: [512]u8 = @splat(0);
+        const set_size_js = std.fmt.bufPrint(&set_size_buf, "window.innerWidth={0};window.innerHeight={1};document.createElement('canvas').width={0};document.createElement('canvas').height={1};", .{ size.width, size.height }) catch unreachable;
+        var r = engine.eval(set_size_js, "<main>") catch {
+            return error.BootstrapFailed;
+        };
+        r.deinit();
+    }
 
     // Event loop (requestAnimationFrame, cancelAnimationFrame)
     var event_loop = EventLoop.init(allocator, &engine, &timer_queue);
@@ -253,7 +266,7 @@ fn runScript(allocator: std.mem.Allocator, js_path: []const u8, config: RunConfi
 
     // Load and eval user script
     const js_source = std.fs.cwd().readFileAlloc(allocator, js_path, 64 * 1024 * 1024) catch |err| {
-        std.debug.print("error: failed to read '{s}': {}\n", .{ js_path, err });
+        log.err("failed to read '{s}': {}", .{ js_path, err });
         std.process.exit(1);
     };
     defer allocator.free(js_source);
@@ -261,20 +274,24 @@ fn runScript(allocator: std.mem.Allocator, js_path: []const u8, config: RunConfi
     const js_path_z = try allocator.dupeZ(u8, js_path);
     defer allocator.free(js_path_z);
 
+    log.info("evaluating '{s}'", .{js_path});
     var result = engine.eval(js_source, js_path_z) catch |err| {
-        std.debug.print("error: JS exception loading '{s}': {}\n", .{ js_path, err });
+        log.err("JS exception loading '{s}': {}", .{ js_path, err });
         std.process.exit(1);
     };
     result.deinit();
 
     // Pump microtasks / timers until the app registers its first rAF
+    log.info("pumping microtasks until rAF registered", .{});
     event_loop.pumpUntilReady();
 
     // Main loop
+    log.info("entering main loop", .{});
     while (!window.shouldClose()) {
         window.pollEvents();
         event_loop.tick();
     }
+    log.info("main loop exited", .{});
 }
 
 // =============================================================================
