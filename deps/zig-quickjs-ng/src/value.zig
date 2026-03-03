@@ -1474,7 +1474,7 @@ pub const Value = extern struct {
             ctx.cval(),
             self.cval(),
             @intCast(args.len),
-            @ptrCast(args.ptr),
+            @ptrCast(@constCast(args.ptr)),
         ));
     }
 

@@ -2,6 +2,7 @@ const std = @import("std");
 
 pub const bootstrap = @import("bootstrap.zig");
 pub const descriptor = @import("descriptor.zig");
+pub const event_bridge = @import("event_bridge.zig");
 pub const event_loop = @import("event_loop.zig");
 pub const gpu_bridge = @import("gpu_bridge.zig");
 pub const handle_table = @import("handle_table.zig");
