@@ -360,16 +360,68 @@
     }
     writeTexture(_destination, _data, _dataLayout, _size) {
     }
+    copyExternalImageToTexture(_source, _destination, _copySize) {
+    }
   };
   var GPUDevice = class extends EventTarget {
     _handle;
     queue;
+    features;
+    limits;
+    lost;
     constructor(handle) {
       super();
       const native = getNative();
       const queueHandle = native?.gpuGetQueue?.(handle) ?? 0;
       this._handle = handle;
       this.queue = new GPUQueue(queueHandle);
+      this.features = /* @__PURE__ */ new Set([
+        "core-features-and-limits",
+        "depth-clip-control",
+        "depth32float-stencil8",
+        "texture-compression-bc",
+        "indirect-first-instance",
+        "rg11b10ufloat-renderable",
+        "bgra8unorm-storage",
+        "float32-filterable",
+        "subgroups"
+      ]);
+      this.limits = {
+        maxTextureDimension1D: 8192,
+        maxTextureDimension2D: 8192,
+        maxTextureDimension3D: 2048,
+        maxTextureArrayLayers: 256,
+        maxBindGroups: 4,
+        maxBindGroupsPlusVertexBuffers: 24,
+        maxBindingsPerBindGroup: 1e3,
+        maxDynamicUniformBuffersPerPipelineLayout: 10,
+        maxDynamicStorageBuffersPerPipelineLayout: 8,
+        maxSampledTexturesPerShaderStage: 16,
+        maxSamplersPerShaderStage: 16,
+        maxStorageBuffersPerShaderStage: 8,
+        maxStorageTexturesPerShaderStage: 4,
+        maxUniformBuffersPerShaderStage: 12,
+        maxUniformBufferBindingSize: 65536,
+        maxStorageBufferBindingSize: 134217728,
+        minUniformBufferOffsetAlignment: 256,
+        minStorageBufferOffsetAlignment: 256,
+        maxVertexBuffers: 8,
+        maxBufferSize: 268435456,
+        maxVertexAttributes: 16,
+        maxVertexBufferArrayStride: 2048,
+        maxInterStageShaderComponents: 60,
+        maxInterStageShaderVariables: 16,
+        maxColorAttachments: 8,
+        maxColorAttachmentBytesPerSample: 32,
+        maxComputeWorkgroupStorageSize: 16384,
+        maxComputeInvocationsPerWorkgroup: 256,
+        maxComputeWorkgroupSizeX: 256,
+        maxComputeWorkgroupSizeY: 256,
+        maxComputeWorkgroupSizeZ: 64,
+        maxComputeWorkgroupsPerDimension: 65535
+      };
+      this.lost = new Promise(() => {
+      });
     }
     destroy() {
     }
@@ -437,12 +489,55 @@
       const handle = native?.gpuRequestDevice?.(this._handle) ?? 0;
       return new GPUDevice(handle);
     }
-    // Stub properties that Three.js may check
+    // Adapter features — real Dawn feature names
     get features() {
-      return /* @__PURE__ */ new Set();
+      return /* @__PURE__ */ new Set([
+        "core-features-and-limits",
+        "depth-clip-control",
+        "depth32float-stencil8",
+        "texture-compression-bc",
+        "indirect-first-instance",
+        "rg11b10ufloat-renderable",
+        "bgra8unorm-storage",
+        "float32-filterable",
+        "subgroups"
+      ]);
     }
     get limits() {
-      return {};
+      return {
+        maxTextureDimension1D: 8192,
+        maxTextureDimension2D: 8192,
+        maxTextureDimension3D: 2048,
+        maxTextureArrayLayers: 256,
+        maxBindGroups: 4,
+        maxBindGroupsPlusVertexBuffers: 24,
+        maxBindingsPerBindGroup: 1e3,
+        maxDynamicUniformBuffersPerPipelineLayout: 10,
+        maxDynamicStorageBuffersPerPipelineLayout: 8,
+        maxSampledTexturesPerShaderStage: 16,
+        maxSamplersPerShaderStage: 16,
+        maxStorageBuffersPerShaderStage: 8,
+        maxStorageTexturesPerShaderStage: 4,
+        maxUniformBuffersPerShaderStage: 12,
+        maxUniformBufferBindingSize: 65536,
+        maxStorageBufferBindingSize: 134217728,
+        minUniformBufferOffsetAlignment: 256,
+        minStorageBufferOffsetAlignment: 256,
+        maxVertexBuffers: 8,
+        maxBufferSize: 268435456,
+        maxVertexAttributes: 16,
+        maxVertexBufferArrayStride: 2048,
+        maxInterStageShaderComponents: 60,
+        maxInterStageShaderVariables: 16,
+        maxColorAttachments: 8,
+        maxColorAttachmentBytesPerSample: 32,
+        maxComputeWorkgroupStorageSize: 16384,
+        maxComputeInvocationsPerWorkgroup: 256,
+        maxComputeWorkgroupSizeX: 256,
+        maxComputeWorkgroupSizeY: 256,
+        maxComputeWorkgroupSizeZ: 64,
+        maxComputeWorkgroupsPerDimension: 65535
+      };
     }
   };
   var GPU = class {
@@ -458,6 +553,131 @@
       return "bgra8unorm";
     }
   };
+
+  // bootstrap/image.ts
+  var ImageBitmap = class {
+    width;
+    height;
+    _data;
+    // RGBA pixels
+    constructor(width, height, data) {
+      this.width = width;
+      this.height = height;
+      this._data = data;
+    }
+    close() {
+    }
+  };
+  var ImageElement = class extends EventTarget {
+    width = 0;
+    height = 0;
+    _src = "";
+    _data = null;
+    _complete = false;
+    crossOrigin = null;
+    // Callback-style event handlers (Three.js uses these)
+    onload = null;
+    onerror = null;
+    get src() {
+      return this._src;
+    }
+    set src(url) {
+      this._src = url;
+      this._complete = false;
+      Promise.resolve().then(async () => {
+        try {
+          const g2 = globalThis;
+          const resp = await g2.fetch(url);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const buf = new Uint8Array(await resp.arrayBuffer());
+          if (typeof __native_decodeImage !== "function") {
+            throw new Error("__native_decodeImage not available");
+          }
+          const result = __native_decodeImage(buf);
+          if (!result) throw new Error("Image decode failed");
+          this.width = result.width;
+          this.height = result.height;
+          this._data = result.data;
+          this._complete = true;
+          const loadEvent = new Event("load");
+          if (this.onload) this.onload.call(this);
+          this.dispatchEvent(loadEvent);
+        } catch (e) {
+          const errorEvent = new Event("error");
+          if (this.onerror) this.onerror.call(this, e);
+          this.dispatchEvent(errorEvent);
+        }
+      });
+    }
+    get complete() {
+      return this._complete;
+    }
+    get naturalWidth() {
+      return this.width;
+    }
+    get naturalHeight() {
+      return this.height;
+    }
+  };
+  function createImageBitmap(source) {
+    if (source instanceof ImageElement) {
+      if (source._data && source._complete) {
+        return Promise.resolve(
+          new ImageBitmap(source.width, source.height, source._data)
+        );
+      }
+      return new Promise((resolve, reject) => {
+        source.addEventListener(
+          "load",
+          () => {
+            if (source._data) {
+              resolve(
+                new ImageBitmap(source.width, source.height, source._data)
+              );
+            } else {
+              reject(new Error("Image has no data after load"));
+            }
+          },
+          { once: true }
+        );
+        source.addEventListener(
+          "error",
+          () => {
+            reject(new Error("Image failed to load"));
+          },
+          { once: true }
+        );
+      });
+    }
+    if (source && typeof source.arrayBuffer === "function") {
+      return source.arrayBuffer().then((ab) => {
+        return decodeRawBytes(new Uint8Array(ab));
+      });
+    }
+    if (source instanceof ArrayBuffer) {
+      return Promise.resolve(decodeRawBytes(new Uint8Array(source)));
+    }
+    if (source instanceof Uint8Array) {
+      return Promise.resolve(decodeRawBytes(source));
+    }
+    return Promise.reject(new Error("Unsupported source type for createImageBitmap"));
+  }
+  function decodeRawBytes(bytes) {
+    if (typeof __native_decodeImage !== "function") {
+      throw new Error("__native_decodeImage not available");
+    }
+    const result = __native_decodeImage(bytes);
+    if (!result) {
+      throw new Error("Image decode failed");
+    }
+    return new ImageBitmap(result.width, result.height, result.data);
+  }
+  function installImage() {
+    const g2 = globalThis;
+    g2.Image = ImageElement;
+    g2.ImageBitmap = ImageBitmap;
+    g2.createImageBitmap = createImageBitmap;
+  }
 
   // bootstrap/dom.ts
   var CanvasStub = class extends EventTarget {
@@ -520,8 +740,12 @@
       this._canvas = canvas;
     }
     createElement(tagName) {
-      if (tagName === "canvas") {
+      const tag = tagName.toLowerCase();
+      if (tag === "canvas") {
         return this._canvas;
+      }
+      if (tag === "img") {
+        return new ImageElement();
       }
       return {
         style: {},
@@ -531,6 +755,9 @@
           return null;
         },
         appendChild(child) {
+          return child;
+        },
+        removeChild(child) {
           return child;
         }
       };
@@ -818,129 +1045,206 @@
     g2.Response = FetchResponse;
   }
 
-  // bootstrap/image.ts
-  var ImageBitmap = class {
-    width;
-    height;
-    _data;
-    // RGBA pixels
-    constructor(width, height, data) {
-      this.width = width;
-      this.height = height;
-      this._data = data;
-    }
-    close() {
-    }
-  };
-  var ImageElement = class extends EventTarget {
-    width = 0;
-    height = 0;
-    _src = "";
-    _data = null;
-    _complete = false;
-    crossOrigin = null;
-    // Callback-style event handlers (Three.js uses these)
-    onload = null;
-    onerror = null;
-    get src() {
-      return this._src;
-    }
-    set src(url) {
-      this._src = url;
-      this._complete = false;
-      Promise.resolve().then(async () => {
-        try {
-          const g2 = globalThis;
-          const resp = await g2.fetch(url);
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          const buf = new Uint8Array(await resp.arrayBuffer());
-          if (typeof __native_decodeImage !== "function") {
-            throw new Error("__native_decodeImage not available");
-          }
-          const result = __native_decodeImage(buf);
-          if (!result) throw new Error("Image decode failed");
-          this.width = result.width;
-          this.height = result.height;
-          this._data = result.data;
-          this._complete = true;
-          const loadEvent = new Event("load");
-          if (this.onload) this.onload.call(this);
-          this.dispatchEvent(loadEvent);
-        } catch (e) {
-          const errorEvent = new Event("error");
-          if (this.onerror) this.onerror.call(this, e);
-          this.dispatchEvent(errorEvent);
-        }
-      });
-    }
-    get complete() {
-      return this._complete;
-    }
-    get naturalWidth() {
-      return this.width;
-    }
-    get naturalHeight() {
-      return this.height;
-    }
-  };
-  function createImageBitmap(source) {
-    if (source instanceof ImageElement) {
-      if (source._data && source._complete) {
-        return Promise.resolve(
-          new ImageBitmap(source.width, source.height, source._data)
-        );
-      }
-      return new Promise((resolve, reject) => {
-        source.addEventListener(
-          "load",
-          () => {
-            if (source._data) {
-              resolve(
-                new ImageBitmap(source.width, source.height, source._data)
-              );
-            } else {
-              reject(new Error("Image has no data after load"));
-            }
-          },
-          { once: true }
-        );
-        source.addEventListener(
-          "error",
-          () => {
-            reject(new Error("Image failed to load"));
-          },
-          { once: true }
-        );
-      });
-    }
-    if (source && typeof source.arrayBuffer === "function") {
-      return source.arrayBuffer().then((ab) => {
-        return decodeRawBytes(new Uint8Array(ab));
-      });
-    }
-    if (source instanceof ArrayBuffer) {
-      return Promise.resolve(decodeRawBytes(new Uint8Array(source)));
-    }
-    if (source instanceof Uint8Array) {
-      return Promise.resolve(decodeRawBytes(source));
-    }
-    return Promise.reject(new Error("Unsupported source type for createImageBitmap"));
-  }
-  function decodeRawBytes(bytes) {
-    if (typeof __native_decodeImage !== "function") {
-      throw new Error("__native_decodeImage not available");
-    }
-    const result = __native_decodeImage(bytes);
-    if (!result) {
-      throw new Error("Image decode failed");
-    }
-    return new ImageBitmap(result.width, result.height, result.data);
-  }
-  function installImage() {
+  // bootstrap/webgpu-constants.ts
+  function installWebGPUConstants() {
     const g2 = globalThis;
-    g2.Image = ImageElement;
-    g2.ImageBitmap = ImageBitmap;
-    g2.createImageBitmap = createImageBitmap;
+    g2.GPUBufferUsage = Object.freeze({
+      MAP_READ: 1,
+      MAP_WRITE: 2,
+      COPY_SRC: 4,
+      COPY_DST: 8,
+      INDEX: 16,
+      VERTEX: 32,
+      UNIFORM: 64,
+      STORAGE: 128,
+      INDIRECT: 256,
+      QUERY_RESOLVE: 512
+    });
+    g2.GPUTextureUsage = Object.freeze({
+      COPY_SRC: 1,
+      COPY_DST: 2,
+      TEXTURE_BINDING: 4,
+      STORAGE_BINDING: 8,
+      RENDER_ATTACHMENT: 16
+    });
+    g2.GPUMapMode = Object.freeze({
+      READ: 1,
+      WRITE: 2
+    });
+    g2.GPUShaderStage = Object.freeze({
+      VERTEX: 1,
+      FRAGMENT: 2,
+      COMPUTE: 4
+    });
+  }
+
+  // bootstrap/abort.ts
+  var AbortSignal = class _AbortSignal extends EventTarget {
+    aborted = false;
+    reason = void 0;
+    // Callback-style handler (used by some code paths)
+    onabort = null;
+    throwIfAborted() {
+      if (this.aborted) {
+        throw this.reason;
+      }
+    }
+    /** Internal: mark this signal as aborted and fire the abort event. */
+    _abort(reason) {
+      if (this.aborted) return;
+      this.aborted = true;
+      this.reason = reason ?? new DOMException("The operation was aborted.", "AbortError");
+      const event = new Event("abort");
+      if (this.onabort) this.onabort.call(this, event);
+      this.dispatchEvent(event);
+    }
+    static abort(reason) {
+      const signal = new _AbortSignal();
+      signal._abort(reason ?? new DOMException("The operation was aborted.", "AbortError"));
+      return signal;
+    }
+    static timeout(ms) {
+      const signal = new _AbortSignal();
+      return signal;
+    }
+    static any(signals) {
+      const combined = new _AbortSignal();
+      for (const s of signals) {
+        if (s.aborted) {
+          combined._abort(s.reason);
+          return combined;
+        }
+      }
+      for (const s of signals) {
+        s.addEventListener("abort", () => {
+          combined._abort(s.reason);
+        }, { once: true });
+      }
+      return combined;
+    }
+  };
+  var DOMException = class extends Error {
+    name;
+    code;
+    constructor(message, name) {
+      super(message ?? "");
+      this.name = name ?? "Error";
+      this.code = 0;
+    }
+  };
+  var AbortController = class {
+    signal;
+    constructor() {
+      this.signal = new AbortSignal();
+    }
+    abort(reason) {
+      this.signal._abort(reason);
+    }
+  };
+  function installAbort() {
+    const g2 = globalThis;
+    g2.AbortController = AbortController;
+    g2.AbortSignal = AbortSignal;
+    g2.DOMException = DOMException;
+  }
+
+  // bootstrap/request.ts
+  var Headers = class _Headers {
+    _map = /* @__PURE__ */ new Map();
+    constructor(init) {
+      if (init) {
+        if (init instanceof _Headers) {
+          init.forEach((value, name) => {
+            this._map.set(name.toLowerCase(), value);
+          });
+        } else {
+          for (const key of Object.keys(init)) {
+            this._map.set(key.toLowerCase(), init[key]);
+          }
+        }
+      }
+    }
+    append(name, value) {
+      const key = name.toLowerCase();
+      const existing = this._map.get(key);
+      if (existing !== void 0) {
+        this._map.set(key, existing + ", " + value);
+      } else {
+        this._map.set(key, value);
+      }
+    }
+    get(name) {
+      return this._map.get(name.toLowerCase()) ?? null;
+    }
+    set(name, value) {
+      this._map.set(name.toLowerCase(), value);
+    }
+    has(name) {
+      return this._map.has(name.toLowerCase());
+    }
+    delete(name) {
+      this._map.delete(name.toLowerCase());
+    }
+    forEach(callback) {
+      this._map.forEach((value, name) => {
+        callback(value, name, this);
+      });
+    }
+    entries() {
+      return this._map.entries();
+    }
+    keys() {
+      return this._map.keys();
+    }
+    values() {
+      return this._map.values();
+    }
+    [Symbol.iterator]() {
+      return this._map.entries();
+    }
+  };
+  var Request = class _Request {
+    url;
+    method;
+    headers;
+    signal;
+    mode;
+    credentials;
+    cache;
+    redirect;
+    referrer;
+    integrity;
+    body;
+    constructor(input, init) {
+      if (typeof input === "string") {
+        this.url = input;
+      } else {
+        this.url = input.url;
+      }
+      this.method = init?.method ?? "GET";
+      this.headers = new Headers(init?.headers);
+      this.signal = init?.signal ?? null;
+      this.mode = init?.mode ?? "cors";
+      this.credentials = init?.credentials ?? "same-origin";
+      this.cache = init?.cache ?? "default";
+      this.redirect = init?.redirect ?? "follow";
+      this.referrer = init?.referrer ?? "about:client";
+      this.integrity = init?.integrity ?? "";
+      this.body = init?.body ?? null;
+    }
+    clone() {
+      return new _Request(this.url, {
+        method: this.method,
+        headers: this.headers,
+        body: this.body,
+        signal: this.signal
+      });
+    }
+  };
+  function installRequest() {
+    const g2 = globalThis;
+    g2.Headers = Headers;
+    g2.Request = Request;
   }
 
   // bootstrap/index.ts
@@ -955,11 +1259,126 @@
   g.WheelEvent = WheelEvent;
   g.KeyboardEvent = KeyboardEvent;
   g.EventTarget = EventTarget;
+  var CustomEvent = class extends Event {
+    detail;
+    constructor(type, init) {
+      super(type, init);
+      this.detail = init?.detail ?? null;
+    }
+  };
+  g.CustomEvent = CustomEvent;
   g.requestAnimationFrame = (cb) => dom.window.requestAnimationFrame(cb);
   g.cancelAnimationFrame = (id) => dom.window.cancelAnimationFrame(id);
   g.innerWidth = dom.window.innerWidth;
   g.innerHeight = dom.window.innerHeight;
   g.devicePixelRatio = dom.window.devicePixelRatio;
+  installWebGPUConstants();
   installFetch();
   installImage();
+  installAbort();
+  installRequest();
+  var URLPolyfill = class {
+    href;
+    origin;
+    protocol;
+    host;
+    hostname;
+    port;
+    pathname;
+    search;
+    hash;
+    searchParams;
+    constructor(url, base) {
+      let resolved = url;
+      if (base && !url.includes("://") && !url.startsWith("data:")) {
+        if (url.startsWith("/")) {
+          const match = base.match(/^(https?:\/\/[^/]+)/);
+          resolved = match ? match[1] + url : url;
+        } else {
+          const lastSlash = base.lastIndexOf("/");
+          resolved = base.slice(0, lastSlash + 1) + url;
+        }
+      }
+      this.href = resolved;
+      const protoMatch = resolved.match(/^([a-z][a-z0-9+.-]*:)/i);
+      this.protocol = protoMatch ? protoMatch[1] : "";
+      const afterProto = this.protocol ? resolved.slice(this.protocol.length) : resolved;
+      if (afterProto.startsWith("//")) {
+        const rest = afterProto.slice(2);
+        const pathStart = rest.indexOf("/");
+        if (pathStart === -1) {
+          this.host = rest;
+          this.pathname = "/";
+        } else {
+          this.host = rest.slice(0, pathStart);
+          this.pathname = rest.slice(pathStart);
+        }
+      } else {
+        this.host = "";
+        this.pathname = afterProto;
+      }
+      const colonIdx = this.host.indexOf(":");
+      if (colonIdx !== -1) {
+        this.hostname = this.host.slice(0, colonIdx);
+        this.port = this.host.slice(colonIdx + 1);
+      } else {
+        this.hostname = this.host;
+        this.port = "";
+      }
+      this.origin = this.protocol ? this.protocol + "//" + this.host : "";
+      const hashIdx = this.pathname.indexOf("#");
+      if (hashIdx !== -1) {
+        this.hash = this.pathname.slice(hashIdx);
+        this.pathname = this.pathname.slice(0, hashIdx);
+      } else {
+        this.hash = "";
+      }
+      const searchIdx = this.pathname.indexOf("?");
+      if (searchIdx !== -1) {
+        this.search = this.pathname.slice(searchIdx);
+        this.pathname = this.pathname.slice(0, searchIdx);
+      } else {
+        this.search = "";
+      }
+      this.searchParams = {
+        get(_name) {
+          return null;
+        },
+        has(_name) {
+          return false;
+        },
+        toString() {
+          return "";
+        }
+      };
+    }
+    toString() {
+      return this.href;
+    }
+  };
+  if (typeof g.URL === "undefined") {
+    g.URL = URLPolyfill;
+  }
+  if (typeof g.URLSearchParams === "undefined") {
+    g.URLSearchParams = class URLSearchParams {
+      _entries = [];
+      constructor(_init) {
+      }
+      get(_name) {
+        return null;
+      }
+      has(_name) {
+        return false;
+      }
+      set(_name, _value) {
+      }
+      append(_name, _value) {
+      }
+      delete(_name) {
+      }
+      toString() {
+        return "";
+      }
+    };
+  }
 })();

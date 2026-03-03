@@ -318,6 +318,14 @@ export class GPUQueue {
   ): void {
     // Stub — real implementation in a future ticket
   }
+
+  copyExternalImageToTexture(
+    _source: object,
+    _destination: object,
+    _copySize: object,
+  ): void {
+    // Stub — real implementation in a future ticket
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +335,9 @@ export class GPUQueue {
 export class GPUDevice extends EventTarget {
   _handle: number;
   queue: GPUQueue;
+  features: Set<string>;
+  limits: Record<string, number>;
+  lost: Promise<{ reason: string; message: string }>;
 
   constructor(handle: number) {
     super();
@@ -334,6 +345,58 @@ export class GPUDevice extends EventTarget {
     const queueHandle = native?.gpuGetQueue?.(handle) as number ?? 0;
     this._handle = handle;
     this.queue = new GPUQueue(queueHandle);
+
+    // Feature set — include core-features-and-limits plus common Dawn features
+    this.features = new Set([
+      "core-features-and-limits",
+      "depth-clip-control",
+      "depth32float-stencil8",
+      "texture-compression-bc",
+      "indirect-first-instance",
+      "rg11b10ufloat-renderable",
+      "bgra8unorm-storage",
+      "float32-filterable",
+      "subgroups",
+    ]);
+
+    // Dawn default GPU limits
+    this.limits = {
+      maxTextureDimension1D: 8192,
+      maxTextureDimension2D: 8192,
+      maxTextureDimension3D: 2048,
+      maxTextureArrayLayers: 256,
+      maxBindGroups: 4,
+      maxBindGroupsPlusVertexBuffers: 24,
+      maxBindingsPerBindGroup: 1000,
+      maxDynamicUniformBuffersPerPipelineLayout: 10,
+      maxDynamicStorageBuffersPerPipelineLayout: 8,
+      maxSampledTexturesPerShaderStage: 16,
+      maxSamplersPerShaderStage: 16,
+      maxStorageBuffersPerShaderStage: 8,
+      maxStorageTexturesPerShaderStage: 4,
+      maxUniformBuffersPerShaderStage: 12,
+      maxUniformBufferBindingSize: 65536,
+      maxStorageBufferBindingSize: 134217728,
+      minUniformBufferOffsetAlignment: 256,
+      minStorageBufferOffsetAlignment: 256,
+      maxVertexBuffers: 8,
+      maxBufferSize: 268435456,
+      maxVertexAttributes: 16,
+      maxVertexBufferArrayStride: 2048,
+      maxInterStageShaderComponents: 60,
+      maxInterStageShaderVariables: 16,
+      maxColorAttachments: 8,
+      maxColorAttachmentBytesPerSample: 32,
+      maxComputeWorkgroupStorageSize: 16384,
+      maxComputeInvocationsPerWorkgroup: 256,
+      maxComputeWorkgroupSizeX: 256,
+      maxComputeWorkgroupSizeY: 256,
+      maxComputeWorkgroupSizeZ: 64,
+      maxComputeWorkgroupsPerDimension: 65535,
+    };
+
+    // Never-resolving promise — device is never lost in our runtime
+    this.lost = new Promise(() => {});
   }
 
   destroy(): void {
@@ -424,13 +487,56 @@ export class GPUAdapter {
     return new GPUDevice(handle);
   }
 
-  // Stub properties that Three.js may check
+  // Adapter features — real Dawn feature names
   get features(): Set<string> {
-    return new Set();
+    return new Set([
+      "core-features-and-limits",
+      "depth-clip-control",
+      "depth32float-stencil8",
+      "texture-compression-bc",
+      "indirect-first-instance",
+      "rg11b10ufloat-renderable",
+      "bgra8unorm-storage",
+      "float32-filterable",
+      "subgroups",
+    ]);
   }
 
   get limits(): Record<string, number> {
-    return {};
+    return {
+      maxTextureDimension1D: 8192,
+      maxTextureDimension2D: 8192,
+      maxTextureDimension3D: 2048,
+      maxTextureArrayLayers: 256,
+      maxBindGroups: 4,
+      maxBindGroupsPlusVertexBuffers: 24,
+      maxBindingsPerBindGroup: 1000,
+      maxDynamicUniformBuffersPerPipelineLayout: 10,
+      maxDynamicStorageBuffersPerPipelineLayout: 8,
+      maxSampledTexturesPerShaderStage: 16,
+      maxSamplersPerShaderStage: 16,
+      maxStorageBuffersPerShaderStage: 8,
+      maxStorageTexturesPerShaderStage: 4,
+      maxUniformBuffersPerShaderStage: 12,
+      maxUniformBufferBindingSize: 65536,
+      maxStorageBufferBindingSize: 134217728,
+      minUniformBufferOffsetAlignment: 256,
+      minStorageBufferOffsetAlignment: 256,
+      maxVertexBuffers: 8,
+      maxBufferSize: 268435456,
+      maxVertexAttributes: 16,
+      maxVertexBufferArrayStride: 2048,
+      maxInterStageShaderComponents: 60,
+      maxInterStageShaderVariables: 16,
+      maxColorAttachments: 8,
+      maxColorAttachmentBytesPerSample: 32,
+      maxComputeWorkgroupStorageSize: 16384,
+      maxComputeInvocationsPerWorkgroup: 256,
+      maxComputeWorkgroupSizeX: 256,
+      maxComputeWorkgroupSizeY: 256,
+      maxComputeWorkgroupSizeZ: 64,
+      maxComputeWorkgroupsPerDimension: 65535,
+    };
   }
 }
 

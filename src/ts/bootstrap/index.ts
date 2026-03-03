@@ -11,6 +11,9 @@ import { Event, PointerEvent, WheelEvent, KeyboardEvent } from "./events";
 import { createDOM } from "./dom";
 import { installFetch } from "./fetch";
 import { installImage } from "./image";
+import { installWebGPUConstants } from "./webgpu-constants";
+import { installAbort } from "./abort";
+import { installRequest } from "./request";
 
 // Create the wired-up DOM instances
 const dom = createDOM();
@@ -30,6 +33,17 @@ g.WheelEvent = WheelEvent;
 g.KeyboardEvent = KeyboardEvent;
 g.EventTarget = EventTarget;
 
+// CustomEvent stub — extends Event with a detail property
+class CustomEvent extends Event {
+  readonly detail: any;
+
+  constructor(type: string, init?: { bubbles?: boolean; cancelable?: boolean; detail?: any }) {
+    super(type, init);
+    this.detail = init?.detail ?? null;
+  }
+}
+g.CustomEvent = CustomEvent;
+
 // window-level convenience aliases
 g.requestAnimationFrame = (cb: (time: number) => void) =>
   dom.window.requestAnimationFrame(cb);
@@ -39,8 +53,128 @@ g.innerWidth = dom.window.innerWidth;
 g.innerHeight = dom.window.innerHeight;
 g.devicePixelRatio = dom.window.devicePixelRatio;
 
+// Install WebGPU usage/mode/stage constants (GPUBufferUsage, GPUTextureUsage, etc.)
+installWebGPUConstants();
+
 // Install fetch() polyfill for local filesystem access
 installFetch();
 
 // Install Image, ImageBitmap, createImageBitmap polyfills
 installImage();
+
+// Install AbortController / AbortSignal / DOMException polyfills
+installAbort();
+
+// Install Request / Headers polyfills
+installRequest();
+
+// Minimal URL constructor — used by Three.js Cache.js in try/catch
+class URLPolyfill {
+  href: string;
+  origin: string;
+  protocol: string;
+  host: string;
+  hostname: string;
+  port: string;
+  pathname: string;
+  search: string;
+  hash: string;
+  searchParams: any;
+
+  constructor(url: string, base?: string) {
+    // Very minimal parsing — enough for Three.js which only uses it
+    // for URL validation in try/catch blocks
+    let resolved = url;
+    if (base && !url.includes("://") && !url.startsWith("data:")) {
+      // Simple base resolution
+      if (url.startsWith("/")) {
+        // Extract origin from base
+        const match = base.match(/^(https?:\/\/[^/]+)/);
+        resolved = match ? match[1] + url : url;
+      } else {
+        const lastSlash = base.lastIndexOf("/");
+        resolved = base.slice(0, lastSlash + 1) + url;
+      }
+    }
+
+    this.href = resolved;
+
+    // Parse protocol
+    const protoMatch = resolved.match(/^([a-z][a-z0-9+.-]*:)/i);
+    this.protocol = protoMatch ? protoMatch[1] : "";
+
+    // Parse host/pathname/search/hash
+    const afterProto = this.protocol ? resolved.slice(this.protocol.length) : resolved;
+    if (afterProto.startsWith("//")) {
+      const rest = afterProto.slice(2);
+      const pathStart = rest.indexOf("/");
+      if (pathStart === -1) {
+        this.host = rest;
+        this.pathname = "/";
+      } else {
+        this.host = rest.slice(0, pathStart);
+        this.pathname = rest.slice(pathStart);
+      }
+    } else {
+      this.host = "";
+      this.pathname = afterProto;
+    }
+
+    // Extract port from host
+    const colonIdx = this.host.indexOf(":");
+    if (colonIdx !== -1) {
+      this.hostname = this.host.slice(0, colonIdx);
+      this.port = this.host.slice(colonIdx + 1);
+    } else {
+      this.hostname = this.host;
+      this.port = "";
+    }
+
+    this.origin = this.protocol ? this.protocol + "//" + this.host : "";
+
+    // Extract hash
+    const hashIdx = this.pathname.indexOf("#");
+    if (hashIdx !== -1) {
+      this.hash = this.pathname.slice(hashIdx);
+      this.pathname = this.pathname.slice(0, hashIdx);
+    } else {
+      this.hash = "";
+    }
+
+    // Extract search
+    const searchIdx = this.pathname.indexOf("?");
+    if (searchIdx !== -1) {
+      this.search = this.pathname.slice(searchIdx);
+      this.pathname = this.pathname.slice(0, searchIdx);
+    } else {
+      this.search = "";
+    }
+
+    // Stub searchParams
+    this.searchParams = {
+      get(_name: string): string | null { return null; },
+      has(_name: string): boolean { return false; },
+      toString(): string { return ""; },
+    };
+  }
+
+  toString(): string {
+    return this.href;
+  }
+}
+
+if (typeof g.URL === "undefined") {
+  g.URL = URLPolyfill;
+}
+if (typeof g.URLSearchParams === "undefined") {
+  g.URLSearchParams = class URLSearchParams {
+    private _entries: [string, string][] = [];
+    constructor(_init?: string | Record<string, string>) {}
+    get(_name: string): string | null { return null; }
+    has(_name: string): boolean { return false; }
+    set(_name: string, _value: string): void {}
+    append(_name: string, _value: string): void {}
+    delete(_name: string): void {}
+    toString(): string { return ""; }
+  };
+}

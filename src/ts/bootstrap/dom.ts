@@ -8,6 +8,7 @@
 import { EventTarget } from "./event-target";
 import { getNative } from "./native";
 import { GPU, GPUCanvasContext } from "./gpu";
+import { ImageElement } from "./image";
 
 // ---------------------------------------------------------------------------
 // Canvas stub
@@ -105,8 +106,12 @@ export class DocumentStub extends EventTarget {
   }
 
   createElement(tagName: string): any {
-    if (tagName === "canvas") {
+    const tag = tagName.toLowerCase();
+    if (tag === "canvas") {
       return this._canvas;
+    }
+    if (tag === "img") {
+      return new ImageElement();
     }
     // Return a minimal element stub for other tags
     return {
@@ -116,6 +121,9 @@ export class DocumentStub extends EventTarget {
         return null;
       },
       appendChild(child: any) {
+        return child;
+      },
+      removeChild(child: any) {
         return child;
       },
     };
