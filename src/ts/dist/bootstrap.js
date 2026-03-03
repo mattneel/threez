@@ -167,12 +167,111 @@
   }
 
   // bootstrap/gpu.ts
+  var GPUBuffer = class {
+    _handle;
+    _device;
+    size;
+    usage;
+    constructor(handle, device, size, usage) {
+      this._handle = handle;
+      this._device = device;
+      this.size = size;
+      this.usage = usage;
+    }
+    async mapAsync(_mode, _offset, _size) {
+    }
+    getMappedRange(_offset, _size) {
+      return new ArrayBuffer(_size ?? this.size);
+    }
+    unmap() {
+    }
+    destroy() {
+      const native = getNative();
+      native?.gpuDestroyBuffer?.(this._handle);
+    }
+  };
+  var GPUTextureView = class {
+    _handle;
+    constructor(handle) {
+      this._handle = handle;
+    }
+  };
+  var GPUTexture = class {
+    _handle;
+    _device;
+    constructor(handle, device) {
+      this._handle = handle;
+      this._device = device;
+    }
+    createView(descriptor) {
+      const native = getNative();
+      const handle = native?.gpuCreateTextureView?.(this._handle, descriptor ?? {}) ?? 0;
+      return new GPUTextureView(handle);
+    }
+    destroy() {
+      const native = getNative();
+      native?.gpuDestroyTexture?.(this._handle);
+    }
+  };
+  var GPUSampler = class {
+    _handle;
+    constructor(handle) {
+      this._handle = handle;
+    }
+  };
+  var GPUShaderModule = class {
+    _handle;
+    constructor(handle) {
+      this._handle = handle;
+    }
+  };
+  var GPUBindGroupLayout = class {
+    _handle;
+    constructor(handle) {
+      this._handle = handle;
+    }
+  };
+  var GPUPipelineLayout = class {
+    _handle;
+    constructor(handle) {
+      this._handle = handle;
+    }
+  };
+  var GPUBindGroup = class {
+    _handle;
+    constructor(handle) {
+      this._handle = handle;
+    }
+  };
+  var GPURenderPipeline = class {
+    _handle;
+    constructor(handle) {
+      this._handle = handle;
+    }
+    getBindGroupLayout(_index) {
+      return new GPUBindGroupLayout(0);
+    }
+  };
+  var GPUComputePipeline = class {
+    _handle;
+    constructor(handle) {
+      this._handle = handle;
+    }
+    getBindGroupLayout(_index) {
+      return new GPUBindGroupLayout(0);
+    }
+  };
   var GPUQueue = class {
     _handle;
     constructor(handle) {
       this._handle = handle;
     }
-    // Future: submit(), writeBuffer(), writeTexture(), etc.
+    submit(_commandBuffers) {
+    }
+    writeBuffer(_buffer, _bufferOffset, _data, _dataOffset, _size) {
+    }
+    writeTexture(_destination, _data, _dataLayout, _size) {
+    }
   };
   var GPUDevice = class extends EventTarget {
     _handle;
@@ -185,6 +284,53 @@
       this.queue = new GPUQueue(queueHandle);
     }
     destroy() {
+    }
+    // --- T16: Resource creation ---
+    createBuffer(descriptor) {
+      const native = getNative();
+      const handle = native?.gpuCreateBuffer?.(this._handle, descriptor) ?? 0;
+      return new GPUBuffer(handle, this, descriptor.size, descriptor.usage);
+    }
+    createTexture(descriptor) {
+      const native = getNative();
+      const handle = native?.gpuCreateTexture?.(this._handle, descriptor) ?? 0;
+      return new GPUTexture(handle, this);
+    }
+    createSampler(descriptor) {
+      const native = getNative();
+      const handle = native?.gpuCreateSampler?.(this._handle, descriptor ?? {}) ?? 0;
+      return new GPUSampler(handle);
+    }
+    // --- T17: Shader & pipeline creation ---
+    createShaderModule(descriptor) {
+      const native = getNative();
+      const handle = native?.gpuCreateShaderModule?.(this._handle, descriptor) ?? 0;
+      return new GPUShaderModule(handle);
+    }
+    createBindGroupLayout(descriptor) {
+      const native = getNative();
+      const handle = native?.gpuCreateBindGroupLayout?.(this._handle, descriptor) ?? 0;
+      return new GPUBindGroupLayout(handle);
+    }
+    createPipelineLayout(descriptor) {
+      const native = getNative();
+      const handle = native?.gpuCreatePipelineLayout?.(this._handle, descriptor) ?? 0;
+      return new GPUPipelineLayout(handle);
+    }
+    createRenderPipeline(descriptor) {
+      const native = getNative();
+      const handle = native?.gpuCreateRenderPipeline?.(this._handle, descriptor) ?? 0;
+      return new GPURenderPipeline(handle);
+    }
+    createComputePipeline(descriptor) {
+      const native = getNative();
+      const handle = native?.gpuCreateComputePipeline?.(this._handle, descriptor) ?? 0;
+      return new GPUComputePipeline(handle);
+    }
+    createBindGroup(descriptor) {
+      const native = getNative();
+      const handle = native?.gpuCreateBindGroup?.(this._handle, descriptor) ?? 0;
+      return new GPUBindGroup(handle);
     }
   };
   var GPUAdapter = class {
@@ -500,6 +646,42 @@
         );
       }
     }
+    if (url.startsWith("http://") || url.startsWith("https://")) {
+      if (typeof __native_httpFetch !== "function") {
+        return Promise.resolve(
+          new FetchResponse(
+            new Uint8Array(0),
+            0,
+            "Network request not supported",
+            url,
+            {}
+          )
+        );
+      }
+      const result = __native_httpFetch(url);
+      if (!result) {
+        return Promise.resolve(
+          new FetchResponse(
+            new Uint8Array(0),
+            0,
+            "Network Error",
+            url,
+            {}
+          )
+        );
+      }
+      return Promise.resolve(
+        new FetchResponse(
+          result.body,
+          result.status,
+          result.statusText || "OK",
+          url,
+          {
+            "content-type": result.contentType || "application/octet-stream"
+          }
+        )
+      );
+    }
     if (isLocalPath(url)) {
       if (typeof __native_readFileSync !== "function") {
         return Promise.resolve(
@@ -547,6 +729,131 @@
     g2.Response = FetchResponse;
   }
 
+  // bootstrap/image.ts
+  var ImageBitmap = class {
+    width;
+    height;
+    _data;
+    // RGBA pixels
+    constructor(width, height, data) {
+      this.width = width;
+      this.height = height;
+      this._data = data;
+    }
+    close() {
+    }
+  };
+  var ImageElement = class extends EventTarget {
+    width = 0;
+    height = 0;
+    _src = "";
+    _data = null;
+    _complete = false;
+    crossOrigin = null;
+    // Callback-style event handlers (Three.js uses these)
+    onload = null;
+    onerror = null;
+    get src() {
+      return this._src;
+    }
+    set src(url) {
+      this._src = url;
+      this._complete = false;
+      Promise.resolve().then(async () => {
+        try {
+          const g2 = globalThis;
+          const resp = await g2.fetch(url);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const buf = new Uint8Array(await resp.arrayBuffer());
+          if (typeof __native_decodeImage !== "function") {
+            throw new Error("__native_decodeImage not available");
+          }
+          const result = __native_decodeImage(buf);
+          if (!result) throw new Error("Image decode failed");
+          this.width = result.width;
+          this.height = result.height;
+          this._data = result.data;
+          this._complete = true;
+          const loadEvent = new Event("load");
+          if (this.onload) this.onload.call(this);
+          this.dispatchEvent(loadEvent);
+        } catch (e) {
+          const errorEvent = new Event("error");
+          if (this.onerror) this.onerror.call(this, e);
+          this.dispatchEvent(errorEvent);
+        }
+      });
+    }
+    get complete() {
+      return this._complete;
+    }
+    get naturalWidth() {
+      return this.width;
+    }
+    get naturalHeight() {
+      return this.height;
+    }
+  };
+  function createImageBitmap(source) {
+    if (source instanceof ImageElement) {
+      if (source._data && source._complete) {
+        return Promise.resolve(
+          new ImageBitmap(source.width, source.height, source._data)
+        );
+      }
+      return new Promise((resolve, reject) => {
+        source.addEventListener(
+          "load",
+          () => {
+            if (source._data) {
+              resolve(
+                new ImageBitmap(source.width, source.height, source._data)
+              );
+            } else {
+              reject(new Error("Image has no data after load"));
+            }
+          },
+          { once: true }
+        );
+        source.addEventListener(
+          "error",
+          () => {
+            reject(new Error("Image failed to load"));
+          },
+          { once: true }
+        );
+      });
+    }
+    if (source && typeof source.arrayBuffer === "function") {
+      return source.arrayBuffer().then((ab) => {
+        return decodeRawBytes(new Uint8Array(ab));
+      });
+    }
+    if (source instanceof ArrayBuffer) {
+      return Promise.resolve(decodeRawBytes(new Uint8Array(source)));
+    }
+    if (source instanceof Uint8Array) {
+      return Promise.resolve(decodeRawBytes(source));
+    }
+    return Promise.reject(new Error("Unsupported source type for createImageBitmap"));
+  }
+  function decodeRawBytes(bytes) {
+    if (typeof __native_decodeImage !== "function") {
+      throw new Error("__native_decodeImage not available");
+    }
+    const result = __native_decodeImage(bytes);
+    if (!result) {
+      throw new Error("Image decode failed");
+    }
+    return new ImageBitmap(result.width, result.height, result.data);
+  }
+  function installImage() {
+    const g2 = globalThis;
+    g2.Image = ImageElement;
+    g2.ImageBitmap = ImageBitmap;
+    g2.createImageBitmap = createImageBitmap;
+  }
+
   // bootstrap/index.ts
   var dom = createDOM();
   var g = globalThis;
@@ -565,4 +872,5 @@
   g.innerHeight = dom.window.innerHeight;
   g.devicePixelRatio = dom.window.devicePixelRatio;
   installFetch();
+  installImage();
 })();

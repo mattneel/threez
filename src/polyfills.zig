@@ -6,6 +6,7 @@ pub const performance_polyfill = @import("polyfills/performance.zig");
 pub const encoding = @import("polyfills/encoding.zig");
 pub const fetch = @import("polyfills/fetch.zig");
 pub const timers = @import("polyfills/timers.zig");
+pub const image = @import("polyfills/image.zig");
 
 /// Registers all native polyfills (console, performance, TextEncoder/TextDecoder,
 /// fetch helpers, setTimeout/setInterval/clearTimeout/clearInterval) into the
@@ -16,6 +17,7 @@ pub fn registerAll(ctx: *quickjs.Context, timer_queue: *timers.TimerQueue) !void
     try encoding.register(ctx);
     try fetch.register(ctx);
     try timers.register(ctx, timer_queue);
+    try image.register(ctx);
 }
 
 test {
@@ -91,4 +93,11 @@ test "registerAll installs console, performance, encoding, and timers" {
     const s8 = try r8.toCString();
     defer r8.freeCString(s8);
     try std.testing.expectEqualStrings("function", s8);
+
+    // __native_decodeImage
+    var r9 = try engine.eval("typeof __native_decodeImage", "<test>");
+    defer r9.deinit();
+    const s9 = try r9.toCString();
+    defer r9.freeCString(s9);
+    try std.testing.expectEqualStrings("function", s9);
 }

@@ -32,6 +32,51 @@ export interface NativeBridge {
 
   /** Decode a base64 string to raw bytes, or null on invalid input. */
   decodeBase64?(data: string): Uint8Array | null;
+
+  /** Perform an HTTP/HTTPS GET request, returning response info or null on error. */
+  httpFetch?(url: string): {
+    status: number;
+    statusText: string;
+    contentType: string;
+    body: Uint8Array;
+  } | null;
+
+  /** Decode PNG/JPEG image bytes to RGBA pixels, or null on failure. */
+  decodeImage?(data: Uint8Array): {
+    width: number;
+    height: number;
+    data: Uint8Array;
+  } | null;
+
+  // --- T16: Buffer / Texture / Sampler creation & destruction ---
+
+  /** Create a GPU buffer, returning an opaque handle ID. */
+  gpuCreateBuffer?(deviceId: number, descriptor: object): number;
+  /** Create a GPU texture, returning an opaque handle ID. */
+  gpuCreateTexture?(deviceId: number, descriptor: object): number;
+  /** Create a texture view from a texture, returning an opaque handle ID. */
+  gpuCreateTextureView?(textureId: number, descriptor?: object): number;
+  /** Create a GPU sampler, returning an opaque handle ID. */
+  gpuCreateSampler?(deviceId: number, descriptor?: object): number;
+  /** Destroy a GPU buffer, releasing its handle. */
+  gpuDestroyBuffer?(bufferId: number): void;
+  /** Destroy a GPU texture, releasing its handle. */
+  gpuDestroyTexture?(textureId: number): void;
+
+  // --- T17: Shader / Pipeline / BindGroup creation ---
+
+  /** Create a shader module from WGSL source, returning an opaque handle ID. */
+  gpuCreateShaderModule?(deviceId: number, descriptor: object): number;
+  /** Create a bind group layout, returning an opaque handle ID. */
+  gpuCreateBindGroupLayout?(deviceId: number, descriptor: object): number;
+  /** Create a pipeline layout, returning an opaque handle ID. */
+  gpuCreatePipelineLayout?(deviceId: number, descriptor: object): number;
+  /** Create a render pipeline, returning an opaque handle ID. */
+  gpuCreateRenderPipeline?(deviceId: number, descriptor: object): number;
+  /** Create a compute pipeline, returning an opaque handle ID. */
+  gpuCreateComputePipeline?(deviceId: number, descriptor: object): number;
+  /** Create a bind group, returning an opaque handle ID. */
+  gpuCreateBindGroup?(deviceId: number, descriptor: object): number;
 }
 
 /**

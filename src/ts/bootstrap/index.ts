@@ -10,6 +10,7 @@ import { EventTarget } from "./event-target";
 import { Event, PointerEvent, WheelEvent, KeyboardEvent } from "./events";
 import { createDOM } from "./dom";
 import { installFetch } from "./fetch";
+import { installImage } from "./image";
 
 // Create the wired-up DOM instances
 const dom = createDOM();
@@ -40,3 +41,6 @@ g.devicePixelRatio = dom.window.devicePixelRatio;
 
 // Install fetch() polyfill for local filesystem access
 installFetch();
+
+// Install Image, ImageBitmap, createImageBitmap polyfills
+installImage();
