@@ -61,10 +61,30 @@ export class GPUTextureView {
 export class GPUTexture {
   _handle: number;
   _device: GPUDevice;
+  readonly width: number;
+  readonly height: number;
+  readonly depthOrArrayLayers: number;
+  readonly mipLevelCount: number;
+  readonly sampleCount: number;
+  readonly dimension: string;
+  readonly format: string;
+  readonly usage: number;
 
-  constructor(handle: number, device: GPUDevice) {
+  constructor(handle: number, device: GPUDevice, descriptor?: {
+    width?: number; height?: number; depthOrArrayLayers?: number;
+    mipLevelCount?: number; sampleCount?: number; dimension?: string;
+    format?: string; usage?: number;
+  }) {
     this._handle = handle;
     this._device = device;
+    this.width = descriptor?.width ?? 0;
+    this.height = descriptor?.height ?? 1;
+    this.depthOrArrayLayers = descriptor?.depthOrArrayLayers ?? 1;
+    this.mipLevelCount = descriptor?.mipLevelCount ?? 1;
+    this.sampleCount = descriptor?.sampleCount ?? 1;
+    this.dimension = descriptor?.dimension ?? "2d";
+    this.format = descriptor?.format ?? "rgba8unorm";
+    this.usage = descriptor?.usage ?? 0;
   }
 
   createView(descriptor?: object): GPUTextureView {
@@ -104,7 +124,10 @@ export class GPUCanvasContext {
   getCurrentTexture(): GPUTexture {
     const native = getNative();
     const handle = native?.gpuGetCurrentTexture?.() as number ?? 0;
-    return new GPUTexture(handle, this._device!);
+    return new GPUTexture(handle, this._device!, {
+      format: this._format,
+      usage: 0x10, // GPUTextureUsage.RENDER_ATTACHMENT
+    });
   }
 
   // Internal: called by event loop after queue.submit
@@ -203,6 +226,24 @@ export class GPUComputePipeline {
 }
 
 // ---------------------------------------------------------------------------
+// GPUQuerySet
+// ---------------------------------------------------------------------------
+
+export class GPUQuerySet {
+  readonly type: string;
+  readonly count: number;
+
+  constructor(type: string, count: number) {
+    this.type = type;
+    this.count = count;
+  }
+
+  destroy(): void {
+    // Stub
+  }
+}
+
+// ---------------------------------------------------------------------------
 // GPUCommandBuffer
 // ---------------------------------------------------------------------------
 
@@ -255,9 +296,71 @@ export class GPURenderPassEncoder {
     native?.gpuRenderPassDrawIndexed?.(this._handle, indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
   }
 
+  drawIndirect(_indirectBuffer: GPUBuffer, _indirectOffset?: number): void {
+    // Stub
+  }
+
+  drawIndexedIndirect(_indirectBuffer: GPUBuffer, _indirectOffset?: number): void {
+    // Stub
+  }
+
+  setViewport(_x: number, _y: number, _width: number, _height: number, _minDepth: number, _maxDepth: number): void {
+    // Stub — real Dawn call comes later
+  }
+
+  setScissorRect(_x: number, _y: number, _width: number, _height: number): void {
+    // Stub
+  }
+
+  setBlendConstant(_color: object | number[]): void {
+    // Stub
+  }
+
+  setStencilReference(_reference: number): void {
+    // Stub
+  }
+
+  executeBundles(_bundles: object[]): void {
+    // Stub
+  }
+
   end(): void {
     const native = getNative();
     native?.gpuRenderPassEnd?.(this._handle);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GPUComputePassEncoder
+// ---------------------------------------------------------------------------
+
+export class GPUComputePassEncoder {
+  _handle: number;
+
+  constructor(handle: number) {
+    this._handle = handle;
+  }
+
+  setPipeline(pipeline: GPUComputePipeline): void {
+    const native = getNative();
+    native?.gpuRenderPassSetPipeline?.(this._handle, pipeline._handle);
+  }
+
+  setBindGroup(index: number, bindGroup: GPUBindGroup): void {
+    const native = getNative();
+    native?.gpuRenderPassSetBindGroup?.(this._handle, index, bindGroup._handle);
+  }
+
+  dispatchWorkgroups(_x: number, _y?: number, _z?: number): void {
+    // Stub
+  }
+
+  dispatchWorkgroupsIndirect(_indirectBuffer: GPUBuffer, _indirectOffset?: number): void {
+    // Stub
+  }
+
+  end(): void {
+    // Stub
   }
 }
 
@@ -276,6 +379,41 @@ export class GPUCommandEncoder {
     const native = getNative();
     const handle = native?.gpuCommandEncoderBeginRenderPass?.(this._handle, descriptor) as number ?? 0;
     return new GPURenderPassEncoder(handle);
+  }
+
+  beginComputePass(_descriptor?: object): GPUComputePassEncoder {
+    return new GPUComputePassEncoder(0);
+  }
+
+  copyBufferToBuffer(
+    _source: GPUBuffer, _sourceOffset: number,
+    _destination: GPUBuffer, _destinationOffset: number,
+    _size: number,
+  ): void {
+    // Stub
+  }
+
+  copyBufferToTexture(_source: object, _destination: object, _copySize: object): void {
+    // Stub
+  }
+
+  copyTextureToBuffer(_source: object, _destination: object, _copySize: object): void {
+    // Stub
+  }
+
+  copyTextureToTexture(_source: object, _destination: object, _copySize: object): void {
+    // Stub
+  }
+
+  clearBuffer(_buffer: GPUBuffer, _offset?: number, _size?: number): void {
+    // Stub
+  }
+
+  resolveQuerySet(
+    _querySet: object, _firstQuery: number, _queryCount: number,
+    _destination: GPUBuffer, _destinationOffset: number,
+  ): void {
+    // Stub
   }
 
   finish(): GPUCommandBuffer {
@@ -415,10 +553,30 @@ export class GPUDevice extends EventTarget {
     return new GPUBuffer(handle, this, descriptor.size, descriptor.usage);
   }
 
-  createTexture(descriptor: object): GPUTexture {
+  createTexture(descriptor: any): GPUTexture {
     const native = getNative();
     const handle = native?.gpuCreateTexture?.(this._handle, descriptor) as number ?? 0;
-    return new GPUTexture(handle, this);
+    // Extract size — can be an array [w,h,d] or object {width,height,depthOrArrayLayers}
+    let w = 0, h = 1, d = 1;
+    if (descriptor?.size) {
+      if (Array.isArray(descriptor.size)) {
+        w = descriptor.size[0] ?? 0;
+        h = descriptor.size[1] ?? 1;
+        d = descriptor.size[2] ?? 1;
+      } else {
+        w = descriptor.size.width ?? 0;
+        h = descriptor.size.height ?? 1;
+        d = descriptor.size.depthOrArrayLayers ?? 1;
+      }
+    }
+    return new GPUTexture(handle, this, {
+      width: w, height: h, depthOrArrayLayers: d,
+      mipLevelCount: descriptor?.mipLevelCount,
+      sampleCount: descriptor?.sampleCount,
+      dimension: descriptor?.dimension,
+      format: descriptor?.format,
+      usage: descriptor?.usage,
+    });
   }
 
   createSampler(descriptor?: object): GPUSampler {
@@ -463,6 +621,23 @@ export class GPUDevice extends EventTarget {
     const native = getNative();
     const handle = native?.gpuCreateBindGroup?.(this._handle, descriptor) as number ?? 0;
     return new GPUBindGroup(handle);
+  }
+
+  createQuerySet(descriptor: { type: string; count: number; label?: string }): GPUQuerySet {
+    return new GPUQuerySet(descriptor.type, descriptor.count);
+  }
+
+  createRenderBundleEncoder(_descriptor: object): object {
+    // Stub — returns a minimal object that won't crash
+    return { finish() { return {}; } };
+  }
+
+  async createRenderPipelineAsync(descriptor: object): Promise<GPURenderPipeline> {
+    return this.createRenderPipeline(descriptor);
+  }
+
+  async createComputePipelineAsync(descriptor: object): Promise<GPUComputePipeline> {
+    return this.createComputePipeline(descriptor);
   }
 
   // --- T18: Command encoding ---
