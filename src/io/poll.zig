@@ -23,12 +23,11 @@ pub const Completion = struct {
 };
 
 /// Platform-specific async I/O poller.
-/// On Linux, this is backed by io_uring.
-/// Future backends: kqueue (macOS/FreeBSD), IOCP (Windows).
+/// Compile-time dispatched — zero overhead abstraction.
 pub const IOPoll = switch (builtin.os.tag) {
     .linux => @import("io_uring.zig").IoUringPoll,
-    // .macos, .freebsd => @import("kqueue.zig").KqueuePoll,   // T6b
-    // .windows => @import("iocp.zig").IocpPoll,                // T6c
+    .macos, .freebsd, .netbsd => @import("kqueue.zig").KqueuePoll,
+    .windows => @import("iocp.zig").IocpPoll,
     else => @compileError("unsupported platform for async I/O"),
 };
 
