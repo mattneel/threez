@@ -1,17 +1,27 @@
 /**
- * fetch() polyfill for local filesystem access.
+ * fetch() polyfill for local filesystem and HTTP/HTTPS access.
  *
  * Uses native helpers registered by Zig:
  *   __native_readFileSync(path: string) -> Uint8Array | null
  *   __native_decodeBase64(data: string) -> Uint8Array | null
+ *   __native_httpFetch(url: string) -> { status, statusText, contentType, body } | null
  *
  * Supports:
  *   - Local file paths (relative and absolute)
  *   - data: URIs (with optional base64 encoding)
+ *   - HTTP/HTTPS URLs
  */
 
 declare function __native_readFileSync(path: string): Uint8Array | null;
 declare function __native_decodeBase64(data: string): Uint8Array | null;
+declare function __native_httpFetch(
+  url: string
+): {
+  status: number;
+  statusText: string;
+  contentType: string;
+  body: Uint8Array;
+} | null;
 
 /** Guess content-type from file extension. */
 function guessContentType(url: string): string {
@@ -213,6 +223,46 @@ function fetchPolyfill(
         new FetchResponse(new Uint8Array(0), 400, "Bad Request", url, {})
       );
     }
+  }
+
+  // HTTP/HTTPS URL
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    if (typeof __native_httpFetch !== "function") {
+      return Promise.resolve(
+        new FetchResponse(
+          new Uint8Array(0),
+          0,
+          "Network request not supported",
+          url,
+          {}
+        )
+      );
+    }
+
+    const result = __native_httpFetch(url);
+    if (!result) {
+      return Promise.resolve(
+        new FetchResponse(
+          new Uint8Array(0),
+          0,
+          "Network Error",
+          url,
+          {}
+        )
+      );
+    }
+
+    return Promise.resolve(
+      new FetchResponse(
+        result.body,
+        result.status,
+        result.statusText || "OK",
+        url,
+        {
+          "content-type": result.contentType || "application/octet-stream",
+        }
+      )
+    );
   }
 
   // Local file path

@@ -8,6 +8,7 @@ const c = quickjs.c;
 ///
 /// - `__native_readFileSync(path: string) → Uint8Array | null`
 /// - `__native_decodeBase64(data: string) → Uint8Array | null`
+/// - `__native_httpFetch(url: string) → { status, statusText, contentType, body } | null`
 ///
 /// The actual `fetch()` API is implemented in JavaScript (bootstrap/fetch.ts)
 /// and calls these native functions for I/O.
@@ -20,6 +21,9 @@ pub fn register(ctx: *Context) !void {
 
     const b64_fn = Value.initCFunction(ctx, &nativeDecodeBase64, "__native_decodeBase64", 1);
     global.setPropertyStr(ctx, "__native_decodeBase64", b64_fn) catch return error.JSError;
+
+    const http_fn = Value.initCFunction(ctx, &nativeHttpFetch, "__native_httpFetch", 1);
+    global.setPropertyStr(ctx, "__native_httpFetch", http_fn) catch return error.JSError;
 }
 
 /// `__native_readFileSync(path)` — reads a file from the local filesystem.
@@ -78,6 +82,79 @@ fn nativeDecodeBase64(
     std.base64.standard.Decoder.decode(decoded, b64_slice) catch return Value.@"null";
 
     return Value.initUint8ArrayCopy(ctx, decoded);
+}
+
+/// `__native_httpFetch(url)` — performs an HTTP/HTTPS GET request.
+///
+/// Returns a JS object `{ status: number, statusText: string, contentType: string, body: Uint8Array }`
+/// on success, or null on error (invalid URL, connection failure, etc.).
+fn nativeHttpFetch(
+    ctx_opt: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+) Value {
+    const ctx = ctx_opt orelse return Value.exception;
+
+    if (argv.len < 1) return Value.@"null";
+
+    const arg: Value = @bitCast(argv[0]);
+    const str_result = arg.toCStringLen(ctx) orelse return Value.@"null";
+    const url_slice = str_result.ptr[0..str_result.len];
+    defer ctx.freeCString(str_result.ptr);
+
+    return httpFetchInner(ctx, url_slice) catch return Value.@"null";
+}
+
+/// Inner implementation of HTTP fetch, separated so we can use Zig error handling.
+fn httpFetchInner(ctx: *Context, url: []const u8) !Value {
+    const allocator = std.heap.page_allocator;
+
+    const uri = std.Uri.parse(url) catch return Value.@"null";
+
+    var client: std.http.Client = .{ .allocator = allocator };
+    defer client.deinit();
+
+    // Create a GET request
+    var req = client.request(.GET, uri, .{
+        .keep_alive = false,
+    }) catch return Value.@"null";
+    defer req.deinit();
+
+    // Send the request (no body for GET)
+    req.sendBodiless() catch return Value.@"null";
+
+    // Receive the response head
+    var redirect_buf: [8 * 1024]u8 = undefined;
+    var response = req.receiveHead(&redirect_buf) catch return Value.@"null";
+
+    // Extract status info before reading body (head strings are invalidated by reader())
+    const status_code: i32 = @intCast(@intFromEnum(response.head.status));
+    const status_phrase = response.head.status.phrase() orelse "Unknown";
+    const content_type = response.head.content_type orelse "application/octet-stream";
+
+    // We need to copy these strings before calling response.reader() which invalidates them
+    const status_text_copy = allocator.dupe(u8, status_phrase) catch return Value.@"null";
+    defer allocator.free(status_text_copy);
+
+    const content_type_copy = allocator.dupe(u8, content_type) catch return Value.@"null";
+    defer allocator.free(content_type_copy);
+
+    // Read the response body
+    const max_body_size = 64 * 1024 * 1024; // 64 MiB
+    var transfer_buf: [8192]u8 = undefined;
+    const body_reader = response.reader(&transfer_buf);
+    const body = body_reader.allocRemaining(allocator, .limited(max_body_size)) catch return Value.@"null";
+    defer allocator.free(body);
+
+    // Build the JS result object: { status, statusText, contentType, body }
+    const result = Value.initObject(ctx);
+
+    result.setPropertyStr(ctx, "status", Value.initInt32(status_code)) catch return Value.@"null";
+    result.setPropertyStr(ctx, "statusText", Value.initStringLen(ctx, status_text_copy)) catch return Value.@"null";
+    result.setPropertyStr(ctx, "contentType", Value.initStringLen(ctx, content_type_copy)) catch return Value.@"null";
+    result.setPropertyStr(ctx, "body", Value.initUint8ArrayCopy(ctx, body)) catch return Value.@"null";
+
+    return result;
 }
 
 // =============================================================================
@@ -197,3 +274,48 @@ test "__native_readFileSync with no args returns null" {
 
     try std.testing.expectEqual(@as(i32, 1), try result.toInt32());
 }
+
+test "__native_httpFetch is registered as a function" {
+    var engine = try JsEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    try register(engine.context);
+
+    var result = try engine.eval(
+        \\typeof __native_httpFetch === "function"
+    , "<test>");
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "__native_httpFetch with no args returns null" {
+    var engine = try JsEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    try register(engine.context);
+
+    var result = try engine.eval(
+        \\__native_httpFetch() === null
+    , "<test>");
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "__native_httpFetch with invalid URL returns null" {
+    var engine = try JsEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    try register(engine.context);
+
+    var result = try engine.eval(
+        \\__native_httpFetch("not-a-valid-url") === null
+    , "<test>");
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+// NOTE: Skipped unreachable-host test — TCP connect to non-routable IPs
+// blocks for the OS timeout (minutes), deadlocking the test runner.
