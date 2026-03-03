@@ -181,9 +181,10 @@ export class GPURenderPipeline {
     this._handle = handle;
   }
 
-  getBindGroupLayout(_index: number): GPUBindGroupLayout {
-    // Stub — requires native introspection (future)
-    return new GPUBindGroupLayout(0);
+  getBindGroupLayout(index: number): GPUBindGroupLayout {
+    const native = getNative();
+    const handle = native?.gpuRenderPipelineGetBindGroupLayout?.(this._handle, index) as number ?? 0;
+    return new GPUBindGroupLayout(handle);
   }
 }
 
@@ -194,9 +195,10 @@ export class GPUComputePipeline {
     this._handle = handle;
   }
 
-  getBindGroupLayout(_index: number): GPUBindGroupLayout {
-    // Stub — requires native introspection (future)
-    return new GPUBindGroupLayout(0);
+  getBindGroupLayout(index: number): GPUBindGroupLayout {
+    const native = getNative();
+    const handle = native?.gpuComputePipelineGetBindGroupLayout?.(this._handle, index) as number ?? 0;
+    return new GPUBindGroupLayout(handle);
   }
 }
 
@@ -301,22 +303,24 @@ export class GPUQueue {
   }
 
   writeBuffer(
-    _buffer: GPUBuffer,
-    _bufferOffset: number,
-    _data: ArrayBuffer | ArrayBufferView,
-    _dataOffset?: number,
-    _size?: number,
+    buffer: GPUBuffer,
+    bufferOffset: number,
+    data: ArrayBuffer | ArrayBufferView,
+    dataOffset?: number,
+    size?: number,
   ): void {
-    // Stub — real implementation in a future ticket
+    const native = getNative();
+    native?.gpuQueueWriteBuffer?.(this._handle, buffer._handle, bufferOffset, data, dataOffset ?? 0, size ?? 0);
   }
 
   writeTexture(
-    _destination: object,
-    _data: ArrayBuffer | ArrayBufferView,
-    _dataLayout: object,
-    _size: object,
+    destination: object,
+    data: ArrayBuffer | ArrayBufferView,
+    dataLayout: object,
+    size: object,
   ): void {
-    // Stub — real implementation in a future ticket
+    const native = getNative();
+    native?.gpuQueueWriteTexture?.(this._handle, destination, data, dataLayout, size);
   }
 
   copyExternalImageToTexture(

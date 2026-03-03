@@ -80,6 +80,10 @@ pub const GpuBridge = struct {
     ///   - gpuRenderPassEnd(passId) → undefined
     ///   - gpuCommandEncoderFinish(encoderId) → command buffer handle ID
     ///   - gpuQueueSubmit(queueId, commandBuffers[]) → undefined
+    ///   - gpuQueueWriteBuffer(queueId, bufferId, bufferOffset, data, dataOffset, size) → undefined
+    ///   - gpuQueueWriteTexture(queueId, destination, data, dataLayout, size) → undefined
+    ///   - gpuRenderPipelineGetBindGroupLayout(pipelineId, index) → bind_group_layout handle ID
+    ///   - gpuComputePipelineGetBindGroupLayout(pipelineId, index) → bind_group_layout handle ID
     ///   - gpuConfigureContext(deviceId, format, alphaMode, width, height) → undefined
     ///   - gpuGetCurrentTexture() → texture handle ID
     ///   - gpuPresent() → undefined
@@ -371,6 +375,47 @@ pub const GpuBridge = struct {
             &.{ht_ptr_num},
         );
         native_obj.setPropertyStr(ctx, "gpuQueueSubmit", queue_submit_fn) catch return error.JSError;
+
+        // gpuQueueWriteBuffer(queueId, bufferId, bufferOffset, data, dataOffset, size) → undefined
+        const queue_write_buffer_fn = Value.initCFunctionData(
+            ctx,
+            &gpuQueueWriteBufferNative,
+            6,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuQueueWriteBuffer", queue_write_buffer_fn) catch return error.JSError;
+
+        // gpuQueueWriteTexture(queueId, destination, data, dataLayout, size) → undefined
+        const queue_write_texture_fn = Value.initCFunctionData(
+            ctx,
+            &gpuQueueWriteTextureNative,
+            5,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuQueueWriteTexture", queue_write_texture_fn) catch return error.JSError;
+
+        // gpuRenderPipelineGetBindGroupLayout(pipelineId, index) → number (bind_group_layout handle)
+        const get_bgl_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPipelineGetBindGroupLayoutNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPipelineGetBindGroupLayout", get_bgl_fn) catch return error.JSError;
+
+        // gpuComputePipelineGetBindGroupLayout(pipelineId, index) → number (bind_group_layout handle)
+        // Reuses the same implementation — both pipeline types work identically.
+        const get_bgl_compute_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPipelineGetBindGroupLayoutNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuComputePipelineGetBindGroupLayout", get_bgl_compute_fn) catch return error.JSError;
 
         // --- T19: WebGPU present / swap chain functions ---
 
@@ -1111,6 +1156,106 @@ fn gpuQueueSubmitNative(
     }
 
     return Value.undefined;
+}
+
+// ---------------------------------------------------------------------------
+// T22: Queue write operations + pipeline introspection
+// ---------------------------------------------------------------------------
+
+/// __native.gpuQueueWriteBuffer(queueId, bufferId, bufferOffset, data, dataOffset, size) → undefined
+///
+/// Accepts a TypedArray or ArrayBuffer and writes its contents to the buffer.
+/// Stub — validates handles and accepts the data. Real Dawn wgpuQueueWriteBuffer comes later.
+fn gpuQueueWriteBufferNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 4) return Value.undefined;
+
+    // argv[0] = queueId
+    const queue_id_val: Value = @bitCast(argv[0]);
+    const queue_f64 = queue_id_val.toFloat64(context) catch return Value.undefined;
+    const queue_id = f64ToHandle(queue_f64);
+    _ = ht.get(queue_id) catch return Value.undefined;
+
+    // argv[1] = bufferId
+    const buffer_id_val: Value = @bitCast(argv[1]);
+    const buffer_f64 = buffer_id_val.toFloat64(context) catch return Value.undefined;
+    const buffer_id = f64ToHandle(buffer_f64);
+    _ = ht.get(buffer_id) catch return Value.undefined;
+
+    // argv[2] = bufferOffset (number)
+    // argv[3] = data (TypedArray or ArrayBuffer)
+    // argv[4] = dataOffset (optional number)
+    // argv[5] = size (optional number)
+    // Stub: handles validated, data accepted but not forwarded to Dawn yet.
+
+    return Value.undefined;
+}
+
+/// __native.gpuQueueWriteTexture(queueId, destination, data, dataLayout, size) → undefined
+///
+/// Stub — validates queue handle. Real Dawn wgpuQueueWriteTexture comes later.
+fn gpuQueueWriteTextureNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 1) return Value.undefined;
+
+    // argv[0] = queueId
+    const queue_id_val: Value = @bitCast(argv[0]);
+    const queue_f64 = queue_id_val.toFloat64(context) catch return Value.undefined;
+    const queue_id = f64ToHandle(queue_f64);
+    _ = ht.get(queue_id) catch return Value.undefined;
+
+    // argv[1] = destination (object with texture handle, mipLevel, origin, aspect)
+    // argv[2] = data (TypedArray or ArrayBuffer)
+    // argv[3] = dataLayout (object with offset, bytesPerRow, rowsPerImage)
+    // argv[4] = size (object or array with width, height, depthOrArrayLayers)
+    // Stub: handles validated, data accepted but not forwarded to Dawn yet.
+
+    return Value.undefined;
+}
+
+/// __native.gpuRenderPipelineGetBindGroupLayout(pipelineId, index) → number (handle ID)
+///
+/// Allocates a new bind_group_layout handle for the pipeline's bind group layout
+/// at the given index. Stub — real Dawn introspection comes later.
+fn gpuRenderPipelineGetBindGroupLayoutNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.@"null";
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.@"null";
+
+    if (argv.len < 2) return Value.@"null";
+
+    // argv[0] = pipelineId — validate pipeline handle
+    const pipeline_id_val: Value = @bitCast(argv[0]);
+    const pipeline_f64 = pipeline_id_val.toFloat64(context) catch return Value.@"null";
+    const pipeline_id = f64ToHandle(pipeline_f64);
+    _ = ht.get(pipeline_id) catch return Value.@"null";
+
+    // argv[1] = index (group number, unused for now)
+
+    // Allocate a bind_group_layout handle
+    const id = ht.alloc(.{ .bind_group_layout = {} }) catch return Value.@"null";
+    return Value.initFloat64(@floatFromInt(id.toNumber()));
 }
 
 // ---------------------------------------------------------------------------
@@ -2492,4 +2637,120 @@ test "full frame cycle: configure → getCurrentTexture → createView → prese
 
     const entry = try ht.get(tex_id);
     try testing.expectEqual(handle_table.HandleType.texture, entry.handle_type);
+}
+
+test "T22 native functions are registered" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    var result = try engine.eval(
+        \\typeof __native.gpuQueueWriteBuffer === 'function' &&
+        \\typeof __native.gpuQueueWriteTexture === 'function' &&
+        \\typeof __native.gpuRenderPipelineGetBindGroupLayout === 'function' &&
+        \\typeof __native.gpuComputePipelineGetBindGroupLayout === 'function'
+    , "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuQueueWriteBuffer validates handles and returns undefined" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var queueId = __native.gpuGetQueue(devId);
+        \\  var bufferId = __native.gpuCreateBuffer(devId, { size: 64, usage: 0x28 });
+        \\  var data = new Float32Array([1.0, 2.0, 3.0, 4.0]);
+        \\  var result = __native.gpuQueueWriteBuffer(queueId, bufferId, 0, data, 0, 16);
+        \\  return result === undefined;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuQueueWriteTexture validates handles and returns undefined" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var queueId = __native.gpuGetQueue(devId);
+        \\  var texId = __native.gpuCreateTexture(devId, { width: 4, height: 4, format: 0, usage: 0 });
+        \\  var data = new Uint8Array(64);
+        \\  var result = __native.gpuQueueWriteTexture(queueId, { texture: texId }, data, { bytesPerRow: 16 }, { width: 4, height: 4 });
+        \\  return result === undefined;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuRenderPipelineGetBindGroupLayout returns a bind_group_layout handle" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const initial_count = ht.activeCount();
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var pipelineId = __native.gpuCreateRenderPipeline(devId, {});
+        \\  var bglId = __native.gpuRenderPipelineGetBindGroupLayout(pipelineId, 0);
+        \\  return bglId;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    // gpuRequestDevice returns pre-created device (no new alloc),
+    // gpuCreateRenderPipeline allocates 1, getBindGroupLayout allocates 1 = 2 new
+    try testing.expectEqual(initial_count + 2, ht.activeCount());
+
+    const bgl_f64 = try result.toFloat64();
+    const bgl_id = f64ToHandle(bgl_f64);
+    try testing.expect(ht.isValid(bgl_id));
+
+    const bgl_entry = try ht.get(bgl_id);
+    try testing.expectEqual(handle_table.HandleType.bind_group_layout, bgl_entry.handle_type);
 }

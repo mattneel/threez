@@ -103,6 +103,17 @@ export interface NativeBridge {
   /** Submit command buffers to a queue. */
   gpuQueueSubmit?(queueId: number, commandBuffers: number[]): void;
 
+  // --- T22: Queue write operations + pipeline introspection ---
+
+  /** Write data to a GPU buffer. */
+  gpuQueueWriteBuffer?(queueId: number, bufferId: number, bufferOffset: number, data: ArrayBuffer | ArrayBufferView, dataOffset: number, size: number): void;
+  /** Write data to a GPU texture. */
+  gpuQueueWriteTexture?(queueId: number, destination: object, data: ArrayBuffer | ArrayBufferView, dataLayout: object, size: object): void;
+  /** Get the bind group layout at the given index from a render pipeline. */
+  gpuRenderPipelineGetBindGroupLayout?(pipelineId: number, index: number): number;
+  /** Get the bind group layout at the given index from a compute pipeline. */
+  gpuComputePipelineGetBindGroupLayout?(pipelineId: number, index: number): number;
+
   // --- T19: WebGPU present / swap chain ---
 
   /** Configure the GPU canvas context surface. */

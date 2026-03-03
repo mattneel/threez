@@ -1,33 +1,36 @@
 /**
- * esbuild configuration for bundling the Three.js test script.
+ * esbuild configuration for bundling Three.js examples.
  *
- * Bundles test-init.js into a single IIFE file (dist/test-bundle.js)
- * that can be evaluated in the threez QuickJS-NG runtime.
+ * Builds all entry points into dist/ as IIFE bundles for the
+ * threez QuickJS-NG runtime.
  *
  * Usage:
- *   npx esbuild --bundle test-init.js --format=iife --outfile=dist/test-bundle.js
- *
- * Or via this config:
  *   node esbuild.config.mjs
  */
 
 import * as esbuild from "esbuild";
 
-await esbuild.build({
-  entryPoints: ["test-init.js"],
+const shared = {
   bundle: true,
   format: "iife",
-  outfile: "dist/test-bundle.js",
   platform: "neutral",
   target: "es2020",
   sourcemap: false,
   minify: false,
-  // Don't mark any imports as external — bundle everything
   external: [],
-  // Treat top-level await correctly
-  supported: {
-    "top-level-await": true,
-  },
+  supported: { "top-level-await": true },
+};
+
+await esbuild.build({
+  ...shared,
+  entryPoints: ["test-init.js"],
+  outfile: "dist/test-bundle.js",
 });
 
-console.log("Bundle written to dist/test-bundle.js");
+await esbuild.build({
+  ...shared,
+  entryPoints: ["scene.js"],
+  outfile: "dist/scene-bundle.js",
+});
+
+console.log("Bundles written to dist/");
