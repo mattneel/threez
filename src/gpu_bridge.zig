@@ -27,6 +27,7 @@ pub const GpuBridge = struct {
     adapter_id: HandleId,
     device_id: HandleId,
     queue_id: HandleId,
+    frame_texture_acquired: bool = false,
 
     /// Initialize the bridge by allocating handle table entries for the
     /// pre-existing adapter, device, and queue from the zgpu GraphicsContext.
@@ -54,6 +55,16 @@ pub const GpuBridge = struct {
             .device_id = device_id,
             .queue_id = queue_id,
         };
+    }
+
+    /// Present the swap chain if getCurrentTexture was called this frame.
+    pub fn presentIfNeeded(self: *GpuBridge) void {
+        if (self.frame_texture_acquired) {
+            self.frame_texture_acquired = false;
+            if (self.gctx) |gctx| {
+                _ = gctx.present();
+            }
+        }
     }
 
     /// Release the bridge's handle table entries.
@@ -102,7 +113,7 @@ pub const GpuBridge = struct {
     ///   - gpuConfigureContext(deviceId, format, alphaMode, width, height) → undefined
     ///   - gpuGetCurrentTexture() → texture handle ID
     ///   - gpuPresent() → undefined
-    pub fn register(self: *const GpuBridge, ctx: *Context) !void {
+    pub fn register(self: *GpuBridge, ctx: *Context) !void {
         const global = ctx.getGlobalObject();
         defer global.deinit(ctx);
 
@@ -2169,6 +2180,7 @@ fn gpuCommandEncoderFinishNative(
     const encoder: wgpu.CommandEncoder = enc_entry.handle.as(wgpu.CommandEncoder) orelse return Value.@"null";
 
     const cmd_buffer = encoder.finish(null);
+    log.debug("commandEncoderFinish: encoder={*} -> cmdBuf={*}", .{ @as(*anyopaque, @ptrCast(encoder)), @as(*anyopaque, @ptrCast(cmd_buffer)) });
     encoder.release();
 
     const cb_id = ht.alloc(.{ .command_buffer = @ptrCast(cmd_buffer) }) catch return Value.@"null";
@@ -2213,7 +2225,9 @@ fn gpuQueueSubmitNative(
         ht.free(cb_id) catch {};
     }
 
+    log.debug("queueSubmit: count={}", .{actual_count});
     gctx.queue.submit(cmd_bufs[0..actual_count]);
+    log.debug("queueSubmit: SUCCESS", .{});
     return Value.undefined;
 }
 
@@ -2449,9 +2463,12 @@ fn gpuGetCurrentTextureNative(
     func_data: [*c]c.JSValue,
 ) Value {
     const context = ctx orelse return Value.@"null";
-    const bridge = getBridgeFromData(context, func_data) orelse return Value.@"null";
+    var bridge = getBridgeFromData(context, func_data) orelse return Value.@"null";
     const ht = bridge.handle_table_ptr;
     const gctx = bridge.gctx orelse return Value.@"null";
+
+    // Mark that we acquired a frame texture — presentIfNeeded will present
+    bridge.frame_texture_acquired = true;
 
     // zgpu's swapchain returns a TextureView directly (not Texture)
     const view = gctx.swapchain.getCurrentTextureView();
@@ -2481,10 +2498,10 @@ fn gpuPresentNative(
 }
 
 /// Extract the *HandleTable pointer from closure data[0].
-fn getBridgeFromData(ctx: *Context, func_data: [*c]c.JSValue) ?*const GpuBridge {
+fn getBridgeFromData(ctx: *Context, func_data: [*c]c.JSValue) ?*GpuBridge {
     const data_val: Value = @bitCast(func_data[0]);
     const ptr_bits = data_val.toFloat64(ctx) catch return null;
-    return f64ToPtr(*const GpuBridge, ptr_bits);
+    return f64ToPtr(*GpuBridge, ptr_bits);
 }
 
 fn getHandleTableFromData(ctx: *Context, func_data: [*c]c.JSValue) ?*HandleTable {

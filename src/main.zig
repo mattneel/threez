@@ -290,6 +290,7 @@ fn runScript(allocator: std.mem.Allocator, js_path: []const u8, config: RunConfi
     while (!window.shouldClose()) {
         window.pollEvents();
         event_loop.tick();
+        gpu_bridge.presentIfNeeded();
     }
     log.info("main loop exited", .{});
 }
