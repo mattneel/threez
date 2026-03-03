@@ -116,6 +116,10 @@ export class GPUTexture {
 
   createView(descriptor?: object): GPUTextureView {
     const native = getNative();
+    const d = descriptor as any;
+    if (d?.baseMipLevel !== undefined || d?.mipLevelCount !== undefined) {
+      // createView with descriptor
+    }
     const handle = native?.gpuCreateTextureView?.(this._handle, descriptor ?? {}) as number ?? 0;
     return new GPUTextureView(handle);
   }
@@ -186,9 +190,11 @@ export class GPUSampler {
 
 export class GPUShaderModule {
   _handle: number;
+  _code: string;
 
-  constructor(handle: number) {
+  constructor(handle: number, code: string = "") {
     this._handle = handle;
+    this._code = code;
   }
 }
 
@@ -271,6 +277,55 @@ export class GPUQuerySet {
 }
 
 // ---------------------------------------------------------------------------
+// GPURenderBundle / GPURenderBundleEncoder
+// ---------------------------------------------------------------------------
+
+/** Opaque container for recorded render bundle commands. */
+export class GPURenderBundle {
+  _commands: any[];
+
+  constructor(commands: any[]) {
+    this._commands = commands;
+  }
+}
+
+/**
+ * Records draw commands into a GPURenderBundle.
+ * Commands are replayed on the real render pass via executeBundles().
+ */
+export class GPURenderBundleEncoder {
+  private _commands: any[] = [];
+
+  setPipeline(pipeline: GPURenderPipeline): void {
+    this._commands.push({ op: "setPipeline", args: [pipeline] });
+  }
+
+  setBindGroup(index: number, bindGroup: GPUBindGroup): void {
+    this._commands.push({ op: "setBindGroup", args: [index, bindGroup] });
+  }
+
+  setVertexBuffer(slot: number, buffer: GPUBuffer, offset?: number, size?: number): void {
+    this._commands.push({ op: "setVertexBuffer", args: [slot, buffer, offset, size] });
+  }
+
+  setIndexBuffer(buffer: GPUBuffer, format: string, offset?: number, size?: number): void {
+    this._commands.push({ op: "setIndexBuffer", args: [buffer, format, offset, size] });
+  }
+
+  draw(vertexCount: number, instanceCount?: number, firstVertex?: number, firstInstance?: number): void {
+    this._commands.push({ op: "draw", args: [vertexCount, instanceCount, firstVertex, firstInstance] });
+  }
+
+  drawIndexed(indexCount: number, instanceCount?: number, firstIndex?: number, baseVertex?: number, firstInstance?: number): void {
+    this._commands.push({ op: "drawIndexed", args: [indexCount, instanceCount, firstIndex, baseVertex, firstInstance] });
+  }
+
+  finish(): GPURenderBundle {
+    return new GPURenderBundle(this._commands);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // GPUCommandBuffer
 // ---------------------------------------------------------------------------
 
@@ -298,7 +353,8 @@ export class GPURenderPassEncoder {
     native?.gpuRenderPassSetPipeline?.(this._handle, pipeline._handle);
   }
 
-  setBindGroup(index: number, bindGroup: GPUBindGroup): void {
+  setBindGroup(index: number, bindGroup: GPUBindGroup | null, ...rest: any[]): void {
+    if (!bindGroup) return;
     const native = getNative();
     native?.gpuRenderPassSetBindGroup?.(this._handle, index, bindGroup._handle);
   }
@@ -349,8 +405,16 @@ export class GPURenderPassEncoder {
     // Stub
   }
 
-  executeBundles(_bundles: object[]): void {
-    // Stub
+  executeBundles(bundles: GPURenderBundle[]): void {
+    for (const bundle of bundles) {
+      if (!bundle || !bundle._commands) continue;
+      for (const cmd of bundle._commands) {
+        const method = (this as any)[cmd.op];
+        if (typeof method === "function") {
+          method.apply(this, cmd.args);
+        }
+      }
+    }
   }
 
   end(): void {
@@ -504,15 +568,68 @@ export class GPUQueue {
     size: object,
   ): void {
     const native = getNative();
-    native?.gpuQueueWriteTexture?.(this._handle, unwrapHandles(destination), data, dataLayout, size);
+    const unwrapped = unwrapHandles(destination);
+    native?.gpuQueueWriteTexture?.(this._handle, unwrapped, data, dataLayout, size);
   }
 
   copyExternalImageToTexture(
-    _source: object,
-    _destination: object,
-    _copySize: object,
+    source: any,
+    destination: any,
+    copySize: any,
   ): void {
-    // Stub — real implementation in a future ticket
+    // Extract RGBA pixel data from our ImageBitmap polyfill
+    const img = source.source;
+    if (!img || !img._data) {
+      return;
+    }
+
+    const data: Uint8Array = img._data;
+    const srcWidth: number = img.width;
+    const srcHeight: number = img.height;
+
+    // Determine copy dimensions
+    let w: number, h: number;
+    if (Array.isArray(copySize)) {
+      w = copySize[0] ?? srcWidth;
+      h = copySize[1] ?? srcHeight;
+    } else if (copySize && typeof copySize === "object") {
+      w = copySize.width ?? srcWidth;
+      h = copySize.height ?? srcHeight;
+    } else {
+      w = srcWidth;
+      h = srcHeight;
+    }
+
+    // Handle origin offset in source
+    const srcOrigin = source.origin;
+    let srcX = 0, srcY = 0;
+    if (Array.isArray(srcOrigin)) {
+      srcX = srcOrigin[0] ?? 0;
+      srcY = srcOrigin[1] ?? 0;
+    } else if (srcOrigin && typeof srcOrigin === "object") {
+      srcX = srcOrigin.x ?? 0;
+      srcY = srcOrigin.y ?? 0;
+    }
+
+    let uploadData: Uint8Array;
+    if (srcX === 0 && srcY === 0 && w === srcWidth && h === srcHeight) {
+      uploadData = data;
+    } else {
+      // Sub-rect copy
+      uploadData = new Uint8Array(w * h * 4);
+      for (let row = 0; row < h; row++) {
+        const srcOff = ((srcY + row) * srcWidth + srcX) * 4;
+        const dstOff = row * w * 4;
+        uploadData.set(data.subarray(srcOff, srcOff + w * 4), dstOff);
+      }
+    }
+
+    this.writeTexture(
+      destination,
+      uploadData,
+      { bytesPerRow: w * 4, rowsPerImage: h },
+      { width: w, height: h, depthOrArrayLayers: 1 },
+    );
   }
 }
 
@@ -642,10 +759,16 @@ export class GPUDevice extends EventTarget {
 
   // --- T17: Shader & pipeline creation ---
 
-  createShaderModule(descriptor: { code: string }): GPUShaderModule {
+  createShaderModule(descriptor: { code: string; label?: string }): GPUShaderModule {
     const native = getNative();
-    const handle = native?.gpuCreateShaderModule?.(this._handle, descriptor) as number ?? 0;
-    return new GPUShaderModule(handle);
+    // Patch WGSL: Dawn's Tint doesn't support 'either' interpolation sampling
+    const code = descriptor.code.replace(/@interpolate\(flat,\s*either\)/g, "@interpolate(flat)");
+    const patched = {
+      ...descriptor,
+      code: code,
+    };
+    const handle = native?.gpuCreateShaderModule?.(this._handle, patched) as number ?? 0;
+    return new GPUShaderModule(handle, code);
   }
 
   createBindGroupLayout(descriptor: object): GPUBindGroupLayout {
@@ -660,9 +783,25 @@ export class GPUDevice extends EventTarget {
     return new GPUPipelineLayout(handle);
   }
 
-  createRenderPipeline(descriptor: object): GPURenderPipeline {
+  createRenderPipeline(descriptor: any): GPURenderPipeline {
     const native = getNative();
-    const handle = native?.gpuCreateRenderPipeline?.(this._handle, unwrapHandles(descriptor)) as number ?? 0;
+    // Fill in missing entryPoint by scanning the WGSL source
+    if (descriptor.vertex && !descriptor.vertex.entryPoint) {
+      const mod = descriptor.vertex.module;
+      if (mod && mod._code) {
+        const m = mod._code.match(/@vertex\s+fn\s+(\w+)/);
+        if (m) descriptor.vertex.entryPoint = m[1];
+      }
+    }
+    if (descriptor.fragment && !descriptor.fragment.entryPoint) {
+      const mod = descriptor.fragment.module;
+      if (mod && mod._code) {
+        const m = mod._code.match(/@fragment\s+fn\s+(\w+)/);
+        if (m) descriptor.fragment.entryPoint = m[1];
+      }
+    }
+    const unwrapped = unwrapHandles(descriptor);
+    const handle = native?.gpuCreateRenderPipeline?.(this._handle, unwrapped) as number ?? 0;
     return new GPURenderPipeline(handle);
   }
 
@@ -674,7 +813,8 @@ export class GPUDevice extends EventTarget {
 
   createBindGroup(descriptor: object): GPUBindGroup {
     const native = getNative();
-    const handle = native?.gpuCreateBindGroup?.(this._handle, unwrapHandles(descriptor)) as number ?? 0;
+    const unwrapped = unwrapHandles(descriptor);
+    const handle = native?.gpuCreateBindGroup?.(this._handle, unwrapped) as number ?? 0;
     return new GPUBindGroup(handle);
   }
 
@@ -682,9 +822,8 @@ export class GPUDevice extends EventTarget {
     return new GPUQuerySet(descriptor.type, descriptor.count);
   }
 
-  createRenderBundleEncoder(_descriptor: object): object {
-    // Stub — returns a minimal object that won't crash
-    return { finish() { return {}; } };
+  createRenderBundleEncoder(_descriptor: object): GPURenderBundleEncoder {
+    return new GPURenderBundleEncoder();
   }
 
   async createRenderPipelineAsync(descriptor: object): Promise<GPURenderPipeline> {

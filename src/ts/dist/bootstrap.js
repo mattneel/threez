@@ -110,6 +110,8 @@
   var PointerEvent = class extends Event {
     clientX;
     clientY;
+    pageX;
+    pageY;
     movementX;
     movementY;
     button;
@@ -120,6 +122,8 @@
       super(type, init);
       this.clientX = init?.clientX ?? 0;
       this.clientY = init?.clientY ?? 0;
+      this.pageX = init?.clientX ?? 0;
+      this.pageY = init?.clientY ?? 0;
       this.movementX = init?.movementX ?? 0;
       this.movementY = init?.movementY ?? 0;
       this.button = init?.button ?? 0;
@@ -241,6 +245,9 @@
     }
     createView(descriptor) {
       const native = getNative();
+      const d = descriptor;
+      if (d?.baseMipLevel !== void 0 || d?.mipLevelCount !== void 0) {
+      }
       const handle = native?.gpuCreateTextureView?.(this._handle, descriptor ?? {}) ?? 0;
       return new GPUTextureView(handle);
     }
@@ -290,8 +297,10 @@
   };
   var GPUShaderModule = class {
     _handle;
-    constructor(handle) {
+    _code;
+    constructor(handle, code = "") {
       this._handle = handle;
+      this._code = code;
     }
   };
   var GPUBindGroupLayout = class {
@@ -344,6 +353,36 @@
     destroy() {
     }
   };
+  var GPURenderBundle = class {
+    _commands;
+    constructor(commands) {
+      this._commands = commands;
+    }
+  };
+  var GPURenderBundleEncoder = class {
+    _commands = [];
+    setPipeline(pipeline) {
+      this._commands.push({ op: "setPipeline", args: [pipeline] });
+    }
+    setBindGroup(index, bindGroup) {
+      this._commands.push({ op: "setBindGroup", args: [index, bindGroup] });
+    }
+    setVertexBuffer(slot, buffer, offset, size) {
+      this._commands.push({ op: "setVertexBuffer", args: [slot, buffer, offset, size] });
+    }
+    setIndexBuffer(buffer, format, offset, size) {
+      this._commands.push({ op: "setIndexBuffer", args: [buffer, format, offset, size] });
+    }
+    draw(vertexCount, instanceCount, firstVertex, firstInstance) {
+      this._commands.push({ op: "draw", args: [vertexCount, instanceCount, firstVertex, firstInstance] });
+    }
+    drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance) {
+      this._commands.push({ op: "drawIndexed", args: [indexCount, instanceCount, firstIndex, baseVertex, firstInstance] });
+    }
+    finish() {
+      return new GPURenderBundle(this._commands);
+    }
+  };
   var GPUCommandBuffer = class {
     _handle;
     constructor(handle) {
@@ -359,7 +398,8 @@
       const native = getNative();
       native?.gpuRenderPassSetPipeline?.(this._handle, pipeline._handle);
     }
-    setBindGroup(index, bindGroup) {
+    setBindGroup(index, bindGroup, ...rest) {
+      if (!bindGroup) return;
       const native = getNative();
       native?.gpuRenderPassSetBindGroup?.(this._handle, index, bindGroup._handle);
     }
@@ -395,7 +435,16 @@
     }
     setStencilReference(_reference) {
     }
-    executeBundles(_bundles) {
+    executeBundles(bundles) {
+      for (const bundle of bundles) {
+        if (!bundle || !bundle._commands) continue;
+        for (const cmd of bundle._commands) {
+          const method = this[cmd.op];
+          if (typeof method === "function") {
+            method.apply(this, cmd.args);
+          }
+        }
+      }
     }
     end() {
       const native = getNative();
@@ -483,9 +532,54 @@
     }
     writeTexture(destination, data, dataLayout, size) {
       const native = getNative();
-      native?.gpuQueueWriteTexture?.(this._handle, unwrapHandles(destination), data, dataLayout, size);
+      const unwrapped = unwrapHandles(destination);
+      native?.gpuQueueWriteTexture?.(this._handle, unwrapped, data, dataLayout, size);
     }
-    copyExternalImageToTexture(_source, _destination, _copySize) {
+    copyExternalImageToTexture(source, destination, copySize) {
+      const img = source.source;
+      if (!img || !img._data) {
+        return;
+      }
+      const data = img._data;
+      const srcWidth = img.width;
+      const srcHeight = img.height;
+      let w, h;
+      if (Array.isArray(copySize)) {
+        w = copySize[0] ?? srcWidth;
+        h = copySize[1] ?? srcHeight;
+      } else if (copySize && typeof copySize === "object") {
+        w = copySize.width ?? srcWidth;
+        h = copySize.height ?? srcHeight;
+      } else {
+        w = srcWidth;
+        h = srcHeight;
+      }
+      const srcOrigin = source.origin;
+      let srcX = 0, srcY = 0;
+      if (Array.isArray(srcOrigin)) {
+        srcX = srcOrigin[0] ?? 0;
+        srcY = srcOrigin[1] ?? 0;
+      } else if (srcOrigin && typeof srcOrigin === "object") {
+        srcX = srcOrigin.x ?? 0;
+        srcY = srcOrigin.y ?? 0;
+      }
+      let uploadData;
+      if (srcX === 0 && srcY === 0 && w === srcWidth && h === srcHeight) {
+        uploadData = data;
+      } else {
+        uploadData = new Uint8Array(w * h * 4);
+        for (let row = 0; row < h; row++) {
+          const srcOff = ((srcY + row) * srcWidth + srcX) * 4;
+          const dstOff = row * w * 4;
+          uploadData.set(data.subarray(srcOff, srcOff + w * 4), dstOff);
+        }
+      }
+      this.writeTexture(
+        destination,
+        uploadData,
+        { bytesPerRow: w * 4, rowsPerImage: h },
+        { width: w, height: h, depthOrArrayLayers: 1 }
+      );
     }
   };
   var GPUDevice = class extends EventTarget {
@@ -595,8 +689,13 @@
     // --- T17: Shader & pipeline creation ---
     createShaderModule(descriptor) {
       const native = getNative();
-      const handle = native?.gpuCreateShaderModule?.(this._handle, descriptor) ?? 0;
-      return new GPUShaderModule(handle);
+      const code = descriptor.code.replace(/@interpolate\(flat,\s*either\)/g, "@interpolate(flat)");
+      const patched = {
+        ...descriptor,
+        code
+      };
+      const handle = native?.gpuCreateShaderModule?.(this._handle, patched) ?? 0;
+      return new GPUShaderModule(handle, code);
     }
     createBindGroupLayout(descriptor) {
       const native = getNative();
@@ -610,7 +709,22 @@
     }
     createRenderPipeline(descriptor) {
       const native = getNative();
-      const handle = native?.gpuCreateRenderPipeline?.(this._handle, unwrapHandles(descriptor)) ?? 0;
+      if (descriptor.vertex && !descriptor.vertex.entryPoint) {
+        const mod = descriptor.vertex.module;
+        if (mod && mod._code) {
+          const m = mod._code.match(/@vertex\s+fn\s+(\w+)/);
+          if (m) descriptor.vertex.entryPoint = m[1];
+        }
+      }
+      if (descriptor.fragment && !descriptor.fragment.entryPoint) {
+        const mod = descriptor.fragment.module;
+        if (mod && mod._code) {
+          const m = mod._code.match(/@fragment\s+fn\s+(\w+)/);
+          if (m) descriptor.fragment.entryPoint = m[1];
+        }
+      }
+      const unwrapped = unwrapHandles(descriptor);
+      const handle = native?.gpuCreateRenderPipeline?.(this._handle, unwrapped) ?? 0;
       return new GPURenderPipeline(handle);
     }
     createComputePipeline(descriptor) {
@@ -620,16 +734,15 @@
     }
     createBindGroup(descriptor) {
       const native = getNative();
-      const handle = native?.gpuCreateBindGroup?.(this._handle, unwrapHandles(descriptor)) ?? 0;
+      const unwrapped = unwrapHandles(descriptor);
+      const handle = native?.gpuCreateBindGroup?.(this._handle, unwrapped) ?? 0;
       return new GPUBindGroup(handle);
     }
     createQuerySet(descriptor) {
       return new GPUQuerySet(descriptor.type, descriptor.count);
     }
     createRenderBundleEncoder(_descriptor) {
-      return { finish() {
-        return {};
-      } };
+      return new GPURenderBundleEncoder();
     }
     async createRenderPipelineAsync(descriptor) {
       return this.createRenderPipeline(descriptor);
@@ -885,6 +998,23 @@
     get clientHeight() {
       return this.height;
     }
+    // OrbitControls adds pointermove/pointerup listeners to ownerDocument
+    get ownerDocument() {
+      return globalThis.document;
+    }
+    // OrbitControls calls getRootNode() for offscreen canvas compatibility
+    getRootNode() {
+      return globalThis.document;
+    }
+    // OrbitControls calls these on pointerdown — no-op in single-window runtime
+    setPointerCapture(_pointerId) {
+    }
+    releasePointerCapture(_pointerId) {
+    }
+    // Some Three.js code checks for this
+    get isConnected() {
+      return true;
+    }
   };
   function createNavigator() {
     return {
@@ -1066,6 +1196,12 @@
       );
       return Promise.resolve(buf);
     }
+    blob() {
+      const g2 = globalThis;
+      const contentType = this.headers.get("content-type") || "application/octet-stream";
+      const blob = new g2.Blob([this._body], { type: contentType });
+      return Promise.resolve(blob);
+    }
   };
   function decodeURIBytes(str) {
     const parts = [];
@@ -1118,6 +1254,21 @@
   }
   function fetchPolyfill(input) {
     const url = typeof input === "string" ? input : input.url ?? input.toString();
+    if (url.startsWith("blob:")) {
+      const g2 = globalThis;
+      const registry = g2.__blobRegistry;
+      const entry = registry?.get(url);
+      if (entry) {
+        return Promise.resolve(
+          new FetchResponse(entry.data, 200, "OK", url, {
+            "content-type": entry.type
+          })
+        );
+      }
+      return Promise.resolve(
+        new FetchResponse(new Uint8Array(0), 404, "Not Found", url, {})
+      );
+    }
     if (url.startsWith("data:")) {
       try {
         return Promise.resolve(fetchDataURI(url));
@@ -1175,7 +1326,19 @@
           )
         );
       }
-      const bytes = __native_readFileSync(url);
+      let bytes = __native_readFileSync(url);
+      if (bytes === null && !url.startsWith("/")) {
+        const scriptDir = globalThis.__scriptDir;
+        if (scriptDir) {
+          bytes = __native_readFileSync(scriptDir + "/" + url);
+          if (bytes === null) {
+            const parentDir = scriptDir.replace(/\/[^/]+\/?$/, "");
+            if (parentDir !== scriptDir) {
+              bytes = __native_readFileSync(parentDir + "/" + url);
+            }
+          }
+        }
+      }
       if (bytes === null) {
         return Promise.resolve(
           new FetchResponse(
@@ -1442,6 +1605,71 @@
   installImage();
   installAbort();
   installRequest();
+  var _blobRegistry = /* @__PURE__ */ new Map();
+  var _blobIdCounter = 0;
+  var BlobPolyfill = class _BlobPolyfill {
+    _data;
+    size;
+    type;
+    constructor(parts, options) {
+      this.type = options?.type ?? "";
+      const buffers = [];
+      let totalLen = 0;
+      if (parts) {
+        for (const part of parts) {
+          let bytes;
+          if (part instanceof Uint8Array) {
+            bytes = part;
+          } else if (part instanceof ArrayBuffer) {
+            bytes = new Uint8Array(part);
+          } else if (ArrayBuffer.isView(part)) {
+            bytes = new Uint8Array(part.buffer, part.byteOffset, part.byteLength);
+          } else if (typeof part === "string") {
+            bytes = new Uint8Array(part.length);
+            for (let i = 0; i < part.length; i++) {
+              bytes[i] = part.charCodeAt(i);
+            }
+          } else if (part instanceof _BlobPolyfill) {
+            bytes = part._data;
+          } else {
+            const s = String(part);
+            bytes = new Uint8Array(s.length);
+            for (let i = 0; i < s.length; i++) {
+              bytes[i] = s.charCodeAt(i);
+            }
+          }
+          buffers.push(bytes);
+          totalLen += bytes.length;
+        }
+      }
+      const merged = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const buf of buffers) {
+        merged.set(buf, offset);
+        offset += buf.length;
+      }
+      this._data = merged;
+      this.size = totalLen;
+    }
+    arrayBuffer() {
+      return Promise.resolve(this._data.buffer.slice(
+        this._data.byteOffset,
+        this._data.byteOffset + this._data.byteLength
+      ));
+    }
+    text() {
+      let str = "";
+      for (let i = 0; i < this._data.length; i++) {
+        str += String.fromCharCode(this._data[i]);
+      }
+      return Promise.resolve(str);
+    }
+    slice(start, end, contentType) {
+      const sliced = this._data.slice(start ?? 0, end ?? this._data.length);
+      return new _BlobPolyfill([sliced], { type: contentType ?? this.type });
+    }
+  };
+  g.Blob = BlobPolyfill;
   var URLPolyfill = class {
     href;
     origin;
@@ -1521,9 +1749,19 @@
       return this.href;
     }
   };
+  URLPolyfill.createObjectURL = function(blob) {
+    const id = `blob:threez/${++_blobIdCounter}`;
+    _blobRegistry.set(id, { data: blob._data, type: blob.type || "application/octet-stream" });
+    return id;
+  };
+  URLPolyfill.revokeObjectURL = function(url) {
+    _blobRegistry.delete(url);
+  };
+  g.__blobRegistry = _blobRegistry;
   if (typeof g.URL === "undefined") {
     g.URL = URLPolyfill;
   }
+  dom.window.URL = g.URL;
   if (typeof g.URLSearchParams === "undefined") {
     g.URLSearchParams = class URLSearchParams {
       _entries = [];

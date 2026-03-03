@@ -281,6 +281,19 @@ fn runScript(allocator: std.mem.Allocator, js_path: []const u8, config: RunConfi
     _ = window.glfw_window.setFramebufferSizeCallback(&glfwFramebufferSizeCallback);
     _ = window.glfw_window.setCursorEnterCallback(&glfwCursorEnterCallback);
 
+    // Set __scriptDir so fetch() can resolve relative paths from the script's directory
+    {
+        const script_dir = std.fs.path.dirname(js_path) orelse ".";
+        const set_dir_js = std.fmt.allocPrint(allocator, "globalThis.__scriptDir = \"{s}\";", .{script_dir}) catch unreachable;
+        defer allocator.free(set_dir_js);
+        const set_dir_z = try allocator.dupeZ(u8, set_dir_js);
+        defer allocator.free(set_dir_z);
+        var r = engine.eval(set_dir_z, "<main>") catch {
+            return error.BootstrapFailed;
+        };
+        r.deinit();
+    }
+
     // Load and eval user script
     const js_source = std.fs.cwd().readFileAlloc(allocator, js_path, 64 * 1024 * 1024) catch |err| {
         log.err("failed to read '{s}': {}", .{ js_path, err });

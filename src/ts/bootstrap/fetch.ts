@@ -142,6 +142,13 @@ class FetchResponse {
     );
     return Promise.resolve(buf as ArrayBuffer);
   }
+
+  blob(): Promise<any> {
+    const g = globalThis as any;
+    const contentType = this.headers.get("content-type") || "application/octet-stream";
+    const blob = new g.Blob([this._body], { type: contentType });
+    return Promise.resolve(blob);
+  }
 }
 
 /** Decode percent-encoded string to bytes. */
@@ -214,6 +221,23 @@ function fetchPolyfill(
   const url =
     typeof input === "string" ? input : input.url ?? input.toString();
 
+  // blob: URL — look up from registry
+  if (url.startsWith("blob:")) {
+    const g = globalThis as any;
+    const registry = g.__blobRegistry as Map<string, { data: Uint8Array; type: string }> | undefined;
+    const entry = registry?.get(url);
+    if (entry) {
+      return Promise.resolve(
+        new FetchResponse(entry.data, 200, "OK", url, {
+          "content-type": entry.type,
+        })
+      );
+    }
+    return Promise.resolve(
+      new FetchResponse(new Uint8Array(0), 404, "Not Found", url, {})
+    );
+  }
+
   // data: URI
   if (url.startsWith("data:")) {
     try {
@@ -279,7 +303,22 @@ function fetchPolyfill(
       );
     }
 
-    const bytes = __native_readFileSync(url);
+    // Try CWD first, then resolve relative to script directory
+    let bytes = __native_readFileSync(url);
+    if (bytes === null && !url.startsWith("/")) {
+      const scriptDir = (globalThis as any).__scriptDir;
+      if (scriptDir) {
+        // Resolve relative to the script's directory (e.g., examples/gltf_viewer/dist/)
+        bytes = __native_readFileSync(scriptDir + "/" + url);
+        // Also try one level up from dist/ (common pattern: script in dist/, assets alongside)
+        if (bytes === null) {
+          const parentDir = scriptDir.replace(/\/[^/]+\/?$/, "");
+          if (parentDir !== scriptDir) {
+            bytes = __native_readFileSync(parentDir + "/" + url);
+          }
+        }
+      }
+    }
     if (bytes === null) {
       return Promise.resolve(
         new FetchResponse(

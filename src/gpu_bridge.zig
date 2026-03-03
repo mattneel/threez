@@ -723,6 +723,8 @@ fn gpuCreateTextureNative(
     });
 
     log.debug("createTexture: SUCCESS texture={*}", .{@as(*anyopaque, @ptrCast(wgpu_texture))});
+
+    // Capture first rgba16float texture as intermediate render target for debug readback
     const id = ht.alloc(.{ .texture = @ptrCast(wgpu_texture) }) catch return Value.@"null";
     return Value.initFloat64(@floatFromInt(id.toNumber()));
 }
@@ -757,10 +759,78 @@ fn gpuCreateTextureViewNative(
     const wgpu_texture: ?wgpu.Texture = tex_entry.handle.as(wgpu.Texture);
     const texture = wgpu_texture orelse return Value.@"null";
 
-    // Create the view — use default descriptor for now
-    const view = texture.createView(.{});
+    // Parse the optional descriptor from JS
+    var view_desc = wgpu.TextureViewDescriptor{};
 
-    log.debug("createTextureView: created view={*} from texture={*}", .{ @as(*anyopaque, @ptrCast(view)), @as(*anyopaque, @ptrCast(texture)) });
+    if (args.len >= 2) {
+        const desc_val: Value = @bitCast(args[1]);
+        if (!desc_val.isUndefined() and !desc_val.isNull()) {
+            // format (string or number)
+            const fmt_val = desc_val.getPropertyStr(ctx, "format");
+            defer fmt_val.deinit(ctx);
+            if (!fmt_val.isUndefined() and !fmt_val.isNull()) {
+                if (fmt_val.toCString(ctx)) |s| {
+                    defer ctx.freeCString(s);
+                    view_desc.format = parseTextureFormat(std.mem.span(s));
+                }
+            }
+
+            // dimension (string)
+            const dim_val = desc_val.getPropertyStr(ctx, "dimension");
+            defer dim_val.deinit(ctx);
+            if (dim_val.toCString(ctx)) |s| {
+                defer ctx.freeCString(s);
+                const str = std.mem.span(s);
+                if (std.mem.eql(u8, str, "1d")) view_desc.dimension = .tvdim_1d
+                else if (std.mem.eql(u8, str, "2d")) view_desc.dimension = .tvdim_2d
+                else if (std.mem.eql(u8, str, "2d-array")) view_desc.dimension = .tvdim_2d_array
+                else if (std.mem.eql(u8, str, "cube")) view_desc.dimension = .tvdim_cube
+                else if (std.mem.eql(u8, str, "cube-array")) view_desc.dimension = .tvdim_cube_array
+                else if (std.mem.eql(u8, str, "3d")) view_desc.dimension = .tvdim_3d;
+            }
+
+            // baseMipLevel
+            const bml_val = desc_val.getPropertyStr(ctx, "baseMipLevel");
+            defer bml_val.deinit(ctx);
+            if (!bml_val.isUndefined()) view_desc.base_mip_level = @intFromFloat(bml_val.toFloat64(ctx) catch 0);
+
+            // mipLevelCount
+            const mlc_val = desc_val.getPropertyStr(ctx, "mipLevelCount");
+            defer mlc_val.deinit(ctx);
+            if (!mlc_val.isUndefined()) view_desc.mip_level_count = @intFromFloat(mlc_val.toFloat64(ctx) catch 0xffff_ffff);
+
+            // baseArrayLayer
+            const bal_val = desc_val.getPropertyStr(ctx, "baseArrayLayer");
+            defer bal_val.deinit(ctx);
+            if (!bal_val.isUndefined()) view_desc.base_array_layer = @intFromFloat(bal_val.toFloat64(ctx) catch 0);
+
+            // arrayLayerCount
+            const alc_val = desc_val.getPropertyStr(ctx, "arrayLayerCount");
+            defer alc_val.deinit(ctx);
+            if (!alc_val.isUndefined()) view_desc.array_layer_count = @intFromFloat(alc_val.toFloat64(ctx) catch 0xffff_ffff);
+
+            // aspect
+            const asp_val = desc_val.getPropertyStr(ctx, "aspect");
+            defer asp_val.deinit(ctx);
+            if (asp_val.toCString(ctx)) |s| {
+                defer ctx.freeCString(s);
+                const str = std.mem.span(s);
+                if (std.mem.eql(u8, str, "stencil-only")) view_desc.aspect = .stencil_only
+                else if (std.mem.eql(u8, str, "depth-only")) view_desc.aspect = .depth_only;
+            }
+        }
+    }
+
+    const view = texture.createView(view_desc);
+
+    log.debug("createTextureView: created view={*} from texture={*} baseMip={} mipCount={} baseLayer={} layerCount={}", .{
+        @as(*anyopaque, @ptrCast(view)),
+        @as(*anyopaque, @ptrCast(texture)),
+        view_desc.base_mip_level,
+        view_desc.mip_level_count,
+        view_desc.base_array_layer,
+        view_desc.array_layer_count,
+    });
     const id = ht.alloc(.{ .texture_view = @ptrCast(view) }) catch return Value.@"null";
     return Value.initFloat64(@floatFromInt(id.toNumber()));
 }
@@ -792,7 +862,7 @@ fn gpuCreateSamplerNative(
             sampler_desc.address_mode_w = @enumFromInt(desc.addressModeW);
             sampler_desc.lod_min_clamp = desc.lodMinClamp;
             sampler_desc.lod_max_clamp = desc.lodMaxClamp;
-            sampler_desc.max_anisotropy = @intCast(desc.maxAnisotropy);
+            sampler_desc.max_anisotropy = @intCast(@max(desc.maxAnisotropy, 1));
             if (desc.compare != 0) {
                 sampler_desc.compare = @enumFromInt(desc.compare);
             }
@@ -1230,12 +1300,12 @@ fn gpuCreateRenderPipelineNative(
     const vm_entry = ht.get(f64ToHandle(vm_f64)) catch return Value.@"null";
     const vertex_module: wgpu.ShaderModule = vm_entry.handle.as(wgpu.ShaderModule) orelse return Value.@"null";
 
-    // vertex.entryPoint
+    // vertex.entryPoint — null means auto-detect (Dawn default)
     const vep_val = vert_val.getPropertyStr(context, "entryPoint");
     defer vep_val.deinit(context);
-    const vertex_ep_owned = vep_val.toCString(context);
+    const vertex_ep_owned = if (vep_val.isUndefined() or vep_val.isNull()) null else vep_val.toCString(context);
     defer if (vertex_ep_owned) |s| context.freeCString(s);
-    const vertex_ep: [*:0]const u8 = vertex_ep_owned orelse "main";
+    const vertex_ep: ?[*:0]const u8 = vertex_ep_owned;
 
     // vertex.buffers (array of VertexBufferLayout)
     var vbuf_layouts: [8]wgpu.VertexBufferLayout = undefined;
@@ -1331,7 +1401,7 @@ fn gpuCreateRenderPipelineNative(
 
     const vertex_state = wgpu.VertexState{
         .module = vertex_module,
-        .entry_point = vertex_ep,
+        .entry_point = vertex_ep orelse "main",
         .buffer_count = vbuf_count,
         .buffers = if (vbuf_count > 0) @ptrCast(&vbuf_layouts) else null,
     };
@@ -1355,9 +1425,9 @@ fn gpuCreateRenderPipelineNative(
 
         const fep_val = frag_val.getPropertyStr(context, "entryPoint");
         defer fep_val.deinit(context);
-        const frag_ep_owned = fep_val.toCString(context);
+        const frag_ep_owned = if (fep_val.isUndefined() or fep_val.isNull()) null else fep_val.toCString(context);
         defer if (frag_ep_owned) |s| context.freeCString(s);
-        const frag_ep: [*:0]const u8 = frag_ep_owned orelse "main";
+        const frag_ep: ?[*:0]const u8 = frag_ep_owned;
 
         // Parse targets
         var target_count: usize = 0;
@@ -1414,7 +1484,7 @@ fn gpuCreateRenderPipelineNative(
 
         fragment_state = .{
             .module = frag_module,
-            .entry_point = frag_ep,
+            .entry_point = frag_ep orelse "main",
             .target_count = target_count,
             .targets = if (target_count > 0) @ptrCast(&color_targets) else null,
         };
@@ -1524,7 +1594,7 @@ fn gpuCreateRenderPipelineNative(
     }
 
     // --- Create the pipeline ---
-    log.debug("createRenderPipeline: layout={}, has_fragment={}, has_depth={}, vbuf_count={}, entry_point={s}", .{
+    log.debug("createRenderPipeline: layout={}, has_fragment={}, has_depth={}, vbuf_count={}, entry_point={?s}", .{
         @intFromPtr(@as(?*anyopaque, if (pipeline_layout) |l| @ptrCast(l) else null)),
         has_fragment,
         has_depth_stencil,
@@ -1904,10 +1974,14 @@ fn gpuCommandEncoderBeginRenderPassNative(
         @as(*anyopaque, @ptrCast(encoder)),
     });
     if (color_count > 0) {
-        log.debug("beginRenderPass: color[0].view={*}, load_op={}, store_op={}", .{
+        log.debug("beginRenderPass: color[0].view={*}, load_op={}, store_op={}, clear=({d},{d},{d},{d})", .{
             @as(*anyopaque, @ptrCast(color_attachments[0].view)),
             @intFromEnum(color_attachments[0].load_op),
             @intFromEnum(color_attachments[0].store_op),
+            color_attachments[0].clear_value.r,
+            color_attachments[0].clear_value.g,
+            color_attachments[0].clear_value.b,
+            color_attachments[0].clear_value.a,
         });
     }
     if (has_depth) {
@@ -1986,7 +2060,9 @@ fn gpuRenderPassSetBindGroupNative(
     const bg_entry = ht.get(f64ToHandle(bg_f64)) catch return Value.undefined;
     const bind_group: wgpu.BindGroup = bg_entry.handle.as(wgpu.BindGroup) orelse return Value.undefined;
 
+    log.debug("setBindGroup: index={} pass={*} bg={*}", .{ @as(u32, @intFromFloat(idx)), @as(*anyopaque, @ptrCast(pass)), @as(*anyopaque, @ptrCast(bind_group)) });
     pass.setBindGroup(@intFromFloat(idx), bind_group, null);
+    log.debug("setBindGroup: SUCCESS", .{});
     return Value.undefined;
 }
 
@@ -2481,16 +2557,36 @@ fn gpuQueueWriteTextureNative(
         .origin = origin,
     };
 
-    // argv[2] = data (ArrayBuffer)
+    // argv[2] = data (ArrayBuffer or TypedArray)
     const data_val_raw: Value = @bitCast(argv[2]);
-    const data_buf = data_val_raw.getArrayBuffer(context) orelse return Value.undefined;
-    if (data_buf.len == 0) return Value.undefined;
+    const data_buf = data_val_raw.getArrayBuffer(context) orelse blk: {
+        // TypedArray: get underlying buffer + byteOffset + byteLength
+        const byte_offset_val = data_val_raw.getPropertyStr(context, "byteOffset");
+        defer byte_offset_val.deinit(context);
+        const byte_length_val = data_val_raw.getPropertyStr(context, "byteLength");
+        defer byte_length_val.deinit(context);
+        const buffer_val = data_val_raw.getPropertyStr(context, "buffer");
+        defer buffer_val.deinit(context);
+        if (buffer_val.getArrayBuffer(context)) |ab| {
+            const ta_offset: usize = @intFromFloat(byte_offset_val.toFloat64(context) catch 0);
+            const ta_length: usize = @intFromFloat(byte_length_val.toFloat64(context) catch 0);
+            if (ta_offset + ta_length <= ab.len) {
+                break :blk ab[ta_offset..][0..ta_length];
+            }
+        }
+        log.warn("writeTexture: could not extract bytes from data arg", .{});
+        break :blk @as(?[]const u8, null);
+    };
+    if (data_buf == null or data_buf.?.len == 0) return Value.undefined;
 
     // argv[3] = dataLayout { offset, bytesPerRow, rowsPerImage }
     const layout_val: Value = @bitCast(argv[3]);
     const doff_val = layout_val.getPropertyStr(context, "offset");
     defer doff_val.deinit(context);
-    const data_offset: usize = @intFromFloat(doff_val.toFloat64(context) catch 0);
+    const data_offset: usize = if (doff_val.isUndefined() or doff_val.isNull())
+        0
+    else
+        @intFromFloat(doff_val.toFloat64(context) catch 0);
 
     const bpr_val = layout_val.getPropertyStr(context, "bytesPerRow");
     defer bpr_val.deinit(context);
@@ -2521,7 +2617,7 @@ fn gpuQueueWriteTextureNative(
         .depth_or_array_layers = @intFromFloat(sd_val.toFloat64(context) catch 1),
     };
 
-    gctx.queue.writeTexture(image_copy_texture, texture_data_layout, write_size, u8, data_buf);
+    gctx.queue.writeTexture(image_copy_texture, texture_data_layout, write_size, u8, data_buf.?);
 
     return Value.undefined;
 }

@@ -68,6 +68,25 @@ export class CanvasStub extends EventTarget {
   get clientHeight(): number {
     return this.height;
   }
+
+  // OrbitControls adds pointermove/pointerup listeners to ownerDocument
+  get ownerDocument(): any {
+    return (globalThis as any).document;
+  }
+
+  // OrbitControls calls getRootNode() for offscreen canvas compatibility
+  getRootNode(): any {
+    return (globalThis as any).document;
+  }
+
+  // OrbitControls calls these on pointerdown — no-op in single-window runtime
+  setPointerCapture(_pointerId: number): void {}
+  releasePointerCapture(_pointerId: number): void {}
+
+  // Some Three.js code checks for this
+  get isConnected(): boolean {
+    return true;
+  }
 }
 
 // ---------------------------------------------------------------------------

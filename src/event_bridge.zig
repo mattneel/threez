@@ -233,6 +233,8 @@ pub const EventBridge = struct {
         self.has_last_pos = true;
 
         self.dispatchPointerEvent("pointermove", x, y, mx, my, 0, self.js_canvas);
+        // Simulate bubbling: OrbitControls listens on ownerDocument for pointermove
+        self.dispatchPointerEvent("pointermove", x, y, mx, my, 0, self.js_document);
     }
 
     /// Called on GLFW mouse button callback.
@@ -243,6 +245,8 @@ pub const EventBridge = struct {
         // Map GLFW button to DOM button
         const dom_button: i32 = glfwButtonToDom(button);
         self.dispatchPointerEvent(event_type, self.last_x, self.last_y, 0, 0, dom_button, self.js_canvas);
+        // Simulate bubbling: OrbitControls listens on ownerDocument for pointerup
+        self.dispatchPointerEvent(event_type, self.last_x, self.last_y, 0, 0, dom_button, self.js_document);
     }
 
     /// Called on GLFW scroll callback.
@@ -264,7 +268,8 @@ pub const EventBridge = struct {
     }
 
     /// Called on GLFW window resize / framebuffer size callback.
-    /// Updates window.innerWidth/innerHeight and dispatches Event("resize") on window.
+    /// Updates window.innerWidth/innerHeight, canvas.width/height,
+    /// globalThis.innerWidth/innerHeight, and dispatches Event("resize") on window.
     pub fn onResize(self: *EventBridge, new_width: i32, new_height: i32) void {
         self.width = new_width;
         self.height = new_height;
@@ -272,6 +277,16 @@ pub const EventBridge = struct {
         // Update window.innerWidth and window.innerHeight
         self.js_window.setPropertyStr(self.ctx, "innerWidth", Value.initInt32(new_width)) catch {};
         self.js_window.setPropertyStr(self.ctx, "innerHeight", Value.initInt32(new_height)) catch {};
+
+        // Update canvas.width and canvas.height so Three.js sees the new size
+        self.js_canvas.setPropertyStr(self.ctx, "width", Value.initInt32(new_width)) catch {};
+        self.js_canvas.setPropertyStr(self.ctx, "height", Value.initInt32(new_height)) catch {};
+
+        // Update globalThis.innerWidth/innerHeight (stale copies from bootstrap)
+        const global = self.ctx.getGlobalObject();
+        defer global.deinit(self.ctx);
+        global.setPropertyStr(self.ctx, "innerWidth", Value.initInt32(new_width)) catch {};
+        global.setPropertyStr(self.ctx, "innerHeight", Value.initInt32(new_height)) catch {};
 
         // Dispatch a plain Event("resize") on window
         self.dispatchSimpleEvent("resize", self.js_window);
@@ -316,6 +331,7 @@ pub const EventBridge = struct {
         init_obj.setPropertyStr(ctx, "movementX", Value.initFloat64(movement_x)) catch return;
         init_obj.setPropertyStr(ctx, "movementY", Value.initFloat64(movement_y)) catch return;
         init_obj.setPropertyStr(ctx, "button", Value.initInt32(button)) catch return;
+        init_obj.setPropertyStr(ctx, "pointerId", Value.initInt32(1)) catch return;
         init_obj.setPropertyStr(ctx, "pointerType", Value.initStringLen(ctx, "mouse")) catch return;
         init_obj.setPropertyStr(ctx, "bubbles", Value.initBool(true)) catch return;
         init_obj.setPropertyStr(ctx, "cancelable", Value.initBool(true)) catch return;

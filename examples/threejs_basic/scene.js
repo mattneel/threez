@@ -46,8 +46,28 @@ async function main() {
   directional.position.set(3, 4, 5);
   scene.add(directional);
 
+  // --- Resize handling ---
+  // Poll for size changes each frame (robust against swap chain timing).
+  // The event bridge updates window.innerWidth/innerHeight on GLFW resize,
+  // but the swap chain may resize at a different point in the frame.
+  let currentWidth = window.innerWidth;
+  let currentHeight = window.innerHeight;
+
+  function handleResize() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (w !== currentWidth || h !== currentHeight) {
+      currentWidth = w;
+      currentHeight = h;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    }
+  }
+
   // --- Animation loop ---
   renderer.setAnimationLoop((time) => {
+    handleResize();
     const t = time * 0.001;
     mesh.rotation.x = t * 0.5;
     mesh.rotation.y = t * 0.7;

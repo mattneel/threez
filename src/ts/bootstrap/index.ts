@@ -68,6 +68,84 @@ installAbort();
 // Install Request / Headers polyfills
 installRequest();
 
+// ---------------------------------------------------------------------------
+// Blob + URL.createObjectURL / revokeObjectURL
+// ---------------------------------------------------------------------------
+
+const _blobRegistry = new Map<string, { data: Uint8Array; type: string }>();
+let _blobIdCounter = 0;
+
+class BlobPolyfill {
+  _data: Uint8Array;
+  readonly size: number;
+  readonly type: string;
+
+  constructor(parts?: any[], options?: { type?: string }) {
+    this.type = options?.type ?? "";
+    // Concatenate all parts into a single Uint8Array
+    const buffers: Uint8Array[] = [];
+    let totalLen = 0;
+    if (parts) {
+      for (const part of parts) {
+        let bytes: Uint8Array;
+        if (part instanceof Uint8Array) {
+          bytes = part;
+        } else if (part instanceof ArrayBuffer) {
+          bytes = new Uint8Array(part);
+        } else if (ArrayBuffer.isView(part)) {
+          bytes = new Uint8Array(part.buffer, part.byteOffset, part.byteLength);
+        } else if (typeof part === "string") {
+          // Simple ASCII encoding
+          bytes = new Uint8Array(part.length);
+          for (let i = 0; i < part.length; i++) {
+            bytes[i] = part.charCodeAt(i);
+          }
+        } else if (part instanceof BlobPolyfill) {
+          bytes = part._data;
+        } else {
+          const s = String(part);
+          bytes = new Uint8Array(s.length);
+          for (let i = 0; i < s.length; i++) {
+            bytes[i] = s.charCodeAt(i);
+          }
+        }
+        buffers.push(bytes);
+        totalLen += bytes.length;
+      }
+    }
+    const merged = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const buf of buffers) {
+      merged.set(buf, offset);
+      offset += buf.length;
+    }
+    this._data = merged;
+    this.size = totalLen;
+  }
+
+  arrayBuffer(): Promise<ArrayBuffer> {
+    return Promise.resolve(this._data.buffer.slice(
+      this._data.byteOffset,
+      this._data.byteOffset + this._data.byteLength,
+    ));
+  }
+
+  text(): Promise<string> {
+    let str = "";
+    for (let i = 0; i < this._data.length; i++) {
+      str += String.fromCharCode(this._data[i]);
+    }
+    return Promise.resolve(str);
+  }
+
+  slice(start?: number, end?: number, contentType?: string): BlobPolyfill {
+    const sliced = this._data.slice(start ?? 0, end ?? this._data.length);
+    return new BlobPolyfill([sliced], { type: contentType ?? this.type });
+  }
+}
+
+g.Blob = BlobPolyfill;
+
 // Minimal URL constructor — used by Three.js Cache.js in try/catch
 class URLPolyfill {
   href: string;
@@ -163,9 +241,25 @@ class URLPolyfill {
   }
 }
 
+// Static methods for object URL management
+(URLPolyfill as any).createObjectURL = function (blob: any): string {
+  const id = `blob:threez/${++_blobIdCounter}`;
+  _blobRegistry.set(id, { data: blob._data, type: blob.type || "application/octet-stream" });
+  return id;
+};
+
+(URLPolyfill as any).revokeObjectURL = function (url: string): void {
+  _blobRegistry.delete(url);
+};
+
+// Export blob registry for fetch to access
+(g as any).__blobRegistry = _blobRegistry;
+
 if (typeof g.URL === "undefined") {
   g.URL = URLPolyfill;
 }
+// GLTFLoader accesses URL via `self.URL` — self is our WindowStub, not globalThis
+(dom.window as any).URL = g.URL;
 if (typeof g.URLSearchParams === "undefined") {
   g.URLSearchParams = class URLSearchParams {
     private _entries: [string, string][] = [];

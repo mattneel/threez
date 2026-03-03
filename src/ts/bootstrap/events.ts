@@ -75,6 +75,8 @@ export interface PointerEventInit extends EventInit {
 export class PointerEvent extends Event {
   readonly clientX: number;
   readonly clientY: number;
+  readonly pageX: number;
+  readonly pageY: number;
   readonly movementX: number;
   readonly movementY: number;
   readonly button: number;
@@ -86,6 +88,9 @@ export class PointerEvent extends Event {
     super(type, init);
     this.clientX = init?.clientX ?? 0;
     this.clientY = init?.clientY ?? 0;
+    // In fullscreen GLFW, pageX === clientX (no scroll offset)
+    this.pageX = init?.clientX ?? 0;
+    this.pageY = init?.clientY ?? 0;
     this.movementX = init?.movementX ?? 0;
     this.movementY = init?.movementY ?? 0;
     this.button = init?.button ?? 0;

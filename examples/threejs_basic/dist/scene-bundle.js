@@ -56868,7 +56868,21 @@ var<${access}> ${name} : ${structName};`;
         const directional = new DirectionalLight(16777215, 1.5);
         directional.position.set(3, 4, 5);
         scene.add(directional);
+        let currentWidth = window.innerWidth;
+        let currentHeight = window.innerHeight;
+        function handleResize() {
+          const w = window.innerWidth;
+          const h = window.innerHeight;
+          if (w !== currentWidth || h !== currentHeight) {
+            currentWidth = w;
+            currentHeight = h;
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+            renderer.setSize(w, h);
+          }
+        }
         renderer.setAnimationLoop((time) => {
+          handleResize();
           const t = time * 1e-3;
           mesh.rotation.x = t * 0.5;
           mesh.rotation.y = t * 0.7;
