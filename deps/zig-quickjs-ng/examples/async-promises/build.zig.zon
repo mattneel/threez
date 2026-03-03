@@ -1,0 +1,15 @@
+.{
+    .name = .async_promises,
+    .version = "0.0.0",
+    .fingerprint = 0x6595bf5818354654,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "main.zig",
+    },
+    .dependencies = .{
+        .quickjs = .{
+            .path = "../../",
+        },
+    },
+}

@@ -1,0 +1,15 @@
+.{
+    .name = .classes,
+    .version = "0.0.0",
+    .fingerprint = 0x2ed7ec5d51918c6,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "main.zig",
+    },
+    .dependencies = .{
+        .quickjs = .{
+            .path = "../../",
+        },
+    },
+}
