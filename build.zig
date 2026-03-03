@@ -120,6 +120,11 @@ pub fn build(b: *std.Build) void {
     });
     lib_unit_tests.linkLibrary(qjs_lib);
 
+    // Add lazy dependencies to the test module so tests can use them
+    if (b.lazyDependency("zignal", .{})) |zignal_dep| {
+        lib_unit_tests.root_module.addImport("zignal", zignal_dep.module("zignal"));
+    }
+
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const exe_unit_tests = b.addTest(.{
