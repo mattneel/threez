@@ -8,6 +8,8 @@ const JsEngine = @import("js_engine.zig").JsEngine;
 const TimerQueue = @import("polyfills/timers.zig").TimerQueue;
 const Window = @import("window.zig").Window;
 
+const log = std.log.scoped(.event_loop);
+
 /// Module-level pointer to the EventLoop, set by `register`.
 /// Required because QuickJS C callbacks don't carry userdata for simple functions.
 var global_loop: ?*EventLoop = null;
@@ -203,6 +205,14 @@ pub const EventLoop = struct {
             if (entry.cancelled) continue;
 
             const result = entry.callback.call(ctx, global_this, &.{ts_val});
+            if (result.isException()) {
+                const exc = ctx.getException();
+                if (exc.toCString(ctx)) |msg| {
+                    log.err("rAF callback exception: {s}", .{std.mem.span(msg)});
+                    ctx.freeCString(msg);
+                }
+                exc.deinit(ctx);
+            }
             result.deinit(ctx);
         }
     }

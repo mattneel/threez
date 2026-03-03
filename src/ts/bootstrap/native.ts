@@ -100,6 +100,10 @@ export interface NativeBridge {
   gpuRenderPassDraw?(passId: number, vertexCount: number, instanceCount?: number, firstVertex?: number, firstInstance?: number): void;
   /** Record an indexed draw call on a render pass encoder. */
   gpuRenderPassDrawIndexed?(passId: number, indexCount: number, instanceCount?: number, firstIndex?: number, baseVertex?: number, firstInstance?: number): void;
+  /** Set the viewport on a render pass encoder. */
+  gpuRenderPassSetViewport?(passId: number, x: number, y: number, width: number, height: number, minDepth: number, maxDepth: number): void;
+  /** Set the scissor rect on a render pass encoder. */
+  gpuRenderPassSetScissorRect?(passId: number, x: number, y: number, width: number, height: number): void;
   /** End a render pass, freeing the render pass handle. */
   gpuRenderPassEnd?(passId: number): void;
   /** Finish command encoding, returning a command buffer handle ID. */

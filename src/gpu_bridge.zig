@@ -62,6 +62,7 @@ pub const GpuBridge = struct {
         if (self.frame_texture_acquired) {
             self.frame_texture_acquired = false;
             if (self.gctx) |gctx| {
+                log.debug("present: calling gctx.present()", .{});
                 _ = gctx.present();
             }
         }
@@ -104,6 +105,8 @@ pub const GpuBridge = struct {
     ///   - gpuRenderPassDraw(passId, vertexCount, instanceCount?, ...) → undefined
     ///   - gpuRenderPassDrawIndexed(passId, indexCount, instanceCount?, ...) → undefined
     ///   - gpuRenderPassEnd(passId) → undefined
+    ///   - gpuRenderPassSetViewport(passId, x, y, width, height, minDepth, maxDepth) → undefined
+    ///   - gpuRenderPassSetScissorRect(passId, x, y, width, height) → undefined
     ///   - gpuCommandEncoderFinish(encoderId) → command buffer handle ID
     ///   - gpuQueueSubmit(queueId, commandBuffers[]) → undefined
     ///   - gpuQueueWriteBuffer(queueId, bufferId, bufferOffset, data, dataOffset, size) → undefined
@@ -402,6 +405,26 @@ pub const GpuBridge = struct {
         );
         native_obj.setPropertyStr(ctx, "gpuRenderPassEnd", rp_end_fn) catch return error.JSError;
 
+        // gpuRenderPassSetViewport(passId, x, y, width, height, minDepth, maxDepth) → undefined
+        const rp_set_viewport_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassSetViewportNative,
+            7,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassSetViewport", rp_set_viewport_fn) catch return error.JSError;
+
+        // gpuRenderPassSetScissorRect(passId, x, y, width, height) → undefined
+        const rp_set_scissor_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassSetScissorRectNative,
+            5,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassSetScissorRect", rp_set_scissor_fn) catch return error.JSError;
+
         // gpuCommandEncoderFinish(encoderId) → command buffer handle ID
         const ce_finish_fn = Value.initCFunctionData(
             ctx,
@@ -612,6 +635,7 @@ fn gpuCreateBufferNative(
     const desc = descriptor.translateDescriptor(BufferDescriptor, ctx, js_desc) catch return Value.@"null";
 
     // Create real wgpu buffer
+    log.debug("createBuffer: size={} usage={} mapped={}", .{ desc.size, desc.usage, desc.mappedAtCreation });
     const wgpu_buffer = gctx.device.createBuffer(.{
         .size = desc.size,
         .usage = @bitCast(desc.usage),
@@ -619,6 +643,7 @@ fn gpuCreateBufferNative(
     });
 
     const id = ht.alloc(.{ .buffer = @ptrCast(wgpu_buffer) }) catch return Value.@"null";
+    log.debug("createBuffer: SUCCESS id={}", .{id.toNumber()});
     return Value.initFloat64(@floatFromInt(id.toNumber()));
 }
 
@@ -804,6 +829,7 @@ fn gpuBufferUnmapNative(
 
     if (ht.get(id)) |entry| {
         if (entry.handle.as(wgpu.Buffer)) |buffer| {
+            log.debug("bufferUnmap: id={}", .{id.toNumber()});
             buffer.unmap();
         }
     } else |_| {}
@@ -850,6 +876,7 @@ fn gpuBufferGetMappedRangeNative(
 
     // Get the actual mapped pointer from Dawn — zero-copy.
     // JS writes directly to GPU mapped memory; unmap finalizes.
+    log.debug("getMappedRange: offset={} size={}", .{ offset, range_size });
     if (buffer.getMappedRange(u8, offset, range_size)) |mapped_slice| {
         // Wrap the mapped GPU memory as a JS ArrayBuffer (no free func —
         // Dawn owns the memory, it is released on buffer.unmap()).
@@ -956,6 +983,9 @@ fn gpuCreateShaderModuleNative(
     const code_ptr = code_val.toCString(context) orelse return Value.@"null";
     defer context.freeCString(code_ptr);
 
+    const code_span = std.mem.span(code_ptr);
+    log.debug("createShaderModule: code_len={}", .{code_span.len});
+
     // Build the chained WGSL descriptor
     var wgsl_desc = wgpu.ShaderModuleWGSLDescriptor{
         .chain = .{ .next = null, .struct_type = .shader_module_wgsl_descriptor },
@@ -967,6 +997,7 @@ fn gpuCreateShaderModuleNative(
     });
 
     const id = ht.alloc(.{ .shader_module = @ptrCast(shader_module) }) catch return Value.@"null";
+    log.debug("createShaderModule: SUCCESS id={}", .{id.toNumber()});
     return Value.initFloat64(@floatFromInt(id.toNumber()));
 }
 
@@ -1419,7 +1450,9 @@ fn gpuCreateRenderPipelineNative(
         defer ff_val.deinit(context);
         if (ff_val.toCString(context)) |s| {
             defer context.freeCString(s);
-            if (std.mem.eql(u8, std.mem.span(s), "cw")) primitive.front_face = .cw;
+            const span = std.mem.span(s);
+            if (std.mem.eql(u8, span, "cw")) primitive.front_face = .cw
+            else if (std.mem.eql(u8, span, "ccw")) primitive.front_face = .ccw;
         }
 
         // stripIndexFormat must only be set for strip topologies
@@ -1797,6 +1830,12 @@ fn gpuCommandEncoderBeginRenderPassNative(
                 } else |_| {}
             }
 
+            if (resolve_target != null) {
+                log.debug("beginRenderPass: color[{}] resolveTarget={*}", .{
+                    i, @as(*anyopaque, @ptrCast(resolve_target.?)),
+                });
+            }
+
             color_attachments[i] = .{
                 .view = view,
                 .resolve_target = resolve_target,
@@ -1989,6 +2028,7 @@ fn gpuRenderPassSetVertexBufferNative(
         if (!sz_val.isUndefined()) size = @intFromFloat(sz_val.toFloat64(context) catch @as(f64, @floatFromInt(std.math.maxInt(u64))));
     }
 
+    log.debug("setVertexBuffer: slot={} offset={} size={}", .{ slot, offset, size });
     pass.setVertexBuffer(slot, buffer, offset, size);
     return Value.undefined;
 }
@@ -2036,6 +2076,7 @@ fn gpuRenderPassSetIndexBufferNative(
         if (!sz_val.isUndefined()) size = @intFromFloat(sz_val.toFloat64(context) catch @as(f64, @floatFromInt(std.math.maxInt(u64))));
     }
 
+    log.debug("setIndexBuffer: format={} offset={} size={}", .{ @intFromEnum(index_format), offset, size });
     pass.setIndexBuffer(buffer, index_format, offset, size);
     return Value.undefined;
 }
@@ -2125,7 +2166,9 @@ fn gpuRenderPassDrawIndexedNative(
         if (!v.isUndefined()) first_instance = @intFromFloat(v.toFloat64(context) catch 0);
     }
 
+    log.debug("drawIndexed: ic={} instc={} fi={} bv={} fInst={}", .{ index_count, instance_count, first_index, base_vertex, first_instance });
     pass.drawIndexed(index_count, instance_count, first_index, base_vertex, first_instance);
+    log.debug("drawIndexed: SUCCESS", .{});
     return Value.undefined;
 }
 
@@ -2157,6 +2200,76 @@ fn gpuRenderPassEndNative(
     pass.release();
     ht.free(pass_id) catch {};
 
+    return Value.undefined;
+}
+
+/// __native.gpuRenderPassSetViewport(passId, x, y, width, height, minDepth, maxDepth) → undefined
+fn gpuRenderPassSetViewportNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 7) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.RenderPassEncoder = pass_entry.handle.as(wgpu.RenderPassEncoder) orelse return Value.undefined;
+
+    const x_val: Value = @bitCast(argv[1]);
+    const y_val: Value = @bitCast(argv[2]);
+    const w_val: Value = @bitCast(argv[3]);
+    const h_val: Value = @bitCast(argv[4]);
+    const min_d_val: Value = @bitCast(argv[5]);
+    const max_d_val: Value = @bitCast(argv[6]);
+
+    const x: f32 = @floatCast(x_val.toFloat64(context) catch 0);
+    const y: f32 = @floatCast(y_val.toFloat64(context) catch 0);
+    const w: f32 = @floatCast(w_val.toFloat64(context) catch 0);
+    const h: f32 = @floatCast(h_val.toFloat64(context) catch 0);
+    const min_depth: f32 = @floatCast(min_d_val.toFloat64(context) catch 0);
+    const max_depth: f32 = @floatCast(max_d_val.toFloat64(context) catch 1);
+
+    log.debug("setViewport: x={d} y={d} w={d} h={d} minD={d} maxD={d}", .{ x, y, w, h, min_depth, max_depth });
+    pass.setViewport(x, y, w, h, min_depth, max_depth);
+    return Value.undefined;
+}
+
+/// __native.gpuRenderPassSetScissorRect(passId, x, y, width, height) → undefined
+fn gpuRenderPassSetScissorRectNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 5) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.RenderPassEncoder = pass_entry.handle.as(wgpu.RenderPassEncoder) orelse return Value.undefined;
+
+    const x_val: Value = @bitCast(argv[1]);
+    const y_val: Value = @bitCast(argv[2]);
+    const w_val: Value = @bitCast(argv[3]);
+    const h_val: Value = @bitCast(argv[4]);
+
+    const x: u32 = @intFromFloat(x_val.toFloat64(context) catch 0);
+    const y: u32 = @intFromFloat(y_val.toFloat64(context) catch 0);
+    const w: u32 = @intFromFloat(w_val.toFloat64(context) catch 0);
+    const h: u32 = @intFromFloat(h_val.toFloat64(context) catch 0);
+
+    log.debug("setScissorRect: x={} y={} w={} h={}", .{ x, y, w, h });
+    pass.setScissorRect(x, y, w, h);
     return Value.undefined;
 }
 
@@ -2266,22 +2379,48 @@ fn gpuQueueWriteBufferNative(
     const data_val: Value = @bitCast(argv[3]);
 
     // Try to get ArrayBuffer bytes via QuickJS API
-    if (data_val.getArrayBuffer(context)) |data_buf| {
+    // First try raw ArrayBuffer, then try getting the underlying buffer from TypedArray
+    const data_buf = data_val.getArrayBuffer(context) orelse blk: {
+        // TypedArray: get underlying buffer + byteOffset + byteLength
+        const byte_offset_val = data_val.getPropertyStr(context, "byteOffset");
+        defer byte_offset_val.deinit(context);
+        const byte_length_val = data_val.getPropertyStr(context, "byteLength");
+        defer byte_length_val.deinit(context);
+        const buffer_val = data_val.getPropertyStr(context, "buffer");
+        defer buffer_val.deinit(context);
+        if (buffer_val.getArrayBuffer(context)) |ab| {
+            const ta_offset: usize = @intFromFloat(byte_offset_val.toFloat64(context) catch 0);
+            const ta_length: usize = @intFromFloat(byte_length_val.toFloat64(context) catch 0);
+            if (ta_offset + ta_length <= ab.len) {
+                break :blk ab[ta_offset..][0..ta_length];
+            }
+        }
+        log.warn("writeBuffer: could not extract bytes from data arg", .{});
+        break :blk @as(?[]const u8, null);
+    };
+
+    if (data_buf) |buf| {
         // Parse dataOffset and size
         var data_offset: usize = 0;
         if (argv.len >= 5) {
             const doff_val: Value = @bitCast(argv[4]);
             if (!doff_val.isUndefined()) data_offset = @intFromFloat(doff_val.toFloat64(context) catch 0);
         }
-        var write_size: usize = data_buf.len - data_offset;
+        var write_size: usize = buf.len - data_offset;
         if (argv.len >= 6) {
             const sz_val: Value = @bitCast(argv[5]);
-            if (!sz_val.isUndefined()) write_size = @intFromFloat(sz_val.toFloat64(context) catch @as(f64, @floatFromInt(write_size)));
+            if (!sz_val.isUndefined()) {
+                const sz_f64 = sz_val.toFloat64(context) catch @as(f64, @floatFromInt(write_size));
+                // size=0 from JS means "use full data length" (WebGPU spec default)
+                const sz: usize = @intFromFloat(sz_f64);
+                if (sz > 0) write_size = sz;
+            }
         }
 
-        const actual_len = @min(write_size, data_buf.len - data_offset);
-        const byte_slice = data_buf[data_offset..][0..actual_len];
+        const actual_len = @min(write_size, buf.len - data_offset);
+        const byte_slice = buf[data_offset..][0..actual_len];
 
+        log.debug("writeBuffer: offset={} data_len={} write_size={}", .{ buffer_offset, buf.len, actual_len });
         gctx.queue.writeBuffer(buffer, buffer_offset, u8, byte_slice);
     }
 

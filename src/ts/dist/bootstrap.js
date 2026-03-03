@@ -1,5 +1,5 @@
 "use strict";
-var __bootstrap = (() => {
+(() => {
   // bootstrap/event-target.ts
   var EventTarget = class {
     _listeners = /* @__PURE__ */ new Map();
@@ -383,9 +383,13 @@ var __bootstrap = (() => {
     }
     drawIndexedIndirect(_indirectBuffer, _indirectOffset) {
     }
-    setViewport(_x, _y, _width, _height, _minDepth, _maxDepth) {
+    setViewport(x, y, width, height, minDepth, maxDepth) {
+      const native = getNative();
+      native?.gpuRenderPassSetViewport?.(this._handle, x, y, width, height, minDepth, maxDepth);
     }
-    setScissorRect(_x, _y, _width, _height) {
+    setScissorRect(x, y, width, height) {
+      const native = getNative();
+      native?.gpuRenderPassSetScissorRect?.(this._handle, x, y, width, height);
     }
     setBlendConstant(_color) {
     }
@@ -461,7 +465,21 @@ var __bootstrap = (() => {
     }
     writeBuffer(buffer, bufferOffset, data, dataOffset, size) {
       const native = getNative();
-      native?.gpuQueueWriteBuffer?.(this._handle, buffer._handle, bufferOffset, data, dataOffset ?? 0, size ?? 0);
+      let byteOffset = 0;
+      let byteSize = 0;
+      if (ArrayBuffer.isView(data)) {
+        const bpe = data.BYTES_PER_ELEMENT ?? 1;
+        byteOffset = (dataOffset ?? 0) * bpe;
+        if (size !== void 0) {
+          byteSize = size * bpe;
+        } else {
+          byteSize = data.byteLength - byteOffset;
+        }
+      } else {
+        byteOffset = dataOffset ?? 0;
+        byteSize = size ?? data.byteLength - byteOffset;
+      }
+      native?.gpuQueueWriteBuffer?.(this._handle, buffer._handle, bufferOffset, data, byteOffset, byteSize);
     }
     writeTexture(destination, data, dataLayout, size) {
       const native = getNative();

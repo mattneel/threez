@@ -17,6 +17,11 @@ pub const JsEngine = struct {
         const runtime: *quickjs.Runtime = try .init();
         errdefer runtime.deinit();
 
+        // Three.js TSL's node system creates deep recursion chains during
+        // shader compilation. The default QuickJS stack limit (256KB) is
+        // too small; increase to 8MB to match typical browser limits.
+        runtime.setMaxStackSize(8 * 1024 * 1024);
+
         const context: *quickjs.Context = try .init(runtime);
         errdefer context.deinit();
 

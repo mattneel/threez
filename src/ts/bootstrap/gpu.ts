@@ -331,12 +331,14 @@ export class GPURenderPassEncoder {
     // Stub
   }
 
-  setViewport(_x: number, _y: number, _width: number, _height: number, _minDepth: number, _maxDepth: number): void {
-    // Stub — real Dawn call comes later
+  setViewport(x: number, y: number, width: number, height: number, minDepth: number, maxDepth: number): void {
+    const native = getNative();
+    native?.gpuRenderPassSetViewport?.(this._handle, x, y, width, height, minDepth, maxDepth);
   }
 
-  setScissorRect(_x: number, _y: number, _width: number, _height: number): void {
-    // Stub
+  setScissorRect(x: number, y: number, width: number, height: number): void {
+    const native = getNative();
+    native?.gpuRenderPassSetScissorRect?.(this._handle, x, y, width, height);
   }
 
   setBlendConstant(_color: object | number[]): void {
@@ -475,7 +477,24 @@ export class GPUQueue {
     size?: number,
   ): void {
     const native = getNative();
-    native?.gpuQueueWriteBuffer?.(this._handle, buffer._handle, bufferOffset, data, dataOffset ?? 0, size ?? 0);
+    // WebGPU spec: for ArrayBufferView, dataOffset and size are in elements.
+    // Convert to byte offsets for the native layer which works in bytes.
+    let byteOffset = 0;
+    let byteSize = 0;
+    if (ArrayBuffer.isView(data)) {
+      const bpe = (data as any).BYTES_PER_ELEMENT ?? 1;
+      byteOffset = (dataOffset ?? 0) * bpe;
+      if (size !== undefined) {
+        byteSize = size * bpe;
+      } else {
+        byteSize = data.byteLength - byteOffset;
+      }
+    } else {
+      // Plain ArrayBuffer — offsets are in bytes
+      byteOffset = dataOffset ?? 0;
+      byteSize = size ?? ((data as ArrayBuffer).byteLength - byteOffset);
+    }
+    native?.gpuQueueWriteBuffer?.(this._handle, buffer._handle, bufferOffset, data, byteOffset, byteSize);
   }
 
   writeTexture(

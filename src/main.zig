@@ -194,6 +194,10 @@ fn runScript(allocator: std.mem.Allocator, js_path: []const u8, config: RunConfi
     var engine = try JsEngine.init(allocator);
     defer engine.deinit();
 
+    // Log unhandled promise rejections (catches errors silently swallowed
+    // by `new Promise(async (resolve, reject) => { ... })` anti-patterns).
+    engine.runtime.setHostPromiseRejectionTracker(void, {}, &promiseRejectionTracker);
+
     // Timer queue
     var timer_queue = TimerQueue.init(allocator);
     defer timer_queue.deinit(engine.context);
@@ -227,6 +231,19 @@ fn runScript(allocator: std.mem.Allocator, js_path: []const u8, config: RunConfi
     var event_loop = EventLoop.init(allocator, &engine, &timer_queue);
     defer event_loop.deinit();
     try event_loop_mod.register(engine.context, &event_loop);
+
+    // Sync rAF/cAF to window/self so Three.js (which uses self.requestAnimationFrame)
+    // routes through the Zig event loop rather than the bootstrap stub.
+    {
+        var r = engine.eval(
+            "window.requestAnimationFrame = requestAnimationFrame;" ++
+                "window.cancelAnimationFrame = cancelAnimationFrame;",
+            "<main>",
+        ) catch {
+            return error.BootstrapFailed;
+        };
+        r.deinit();
+    }
 
     // Event bridge (GLFW → DOM events)
     const js_window = blk: {
@@ -284,6 +301,15 @@ fn runScript(allocator: std.mem.Allocator, js_path: []const u8, config: RunConfi
     // Pump microtasks / timers until the app registers its first rAF
     log.info("pumping microtasks until rAF registered", .{});
     event_loop.pumpUntilReady();
+
+    // Present any frame rendered during the pump phase
+    gpu_bridge.presentIfNeeded();
+
+    if (event_loop.raf_callbacks.items.len == 0) {
+        log.warn("no rAF callbacks registered after pump — animation loop may not be running", .{});
+    } else {
+        log.info("rAF registered, {} callback(s) pending", .{event_loop.raf_callbacks.items.len});
+    }
 
     // Main loop
     log.info("entering main loop", .{});
@@ -347,4 +373,25 @@ fn glfwFramebufferSizeCallback(glfw_win: *zglfw.Window, width: c_int, height: c_
 fn glfwCursorEnterCallback(glfw_win: *zglfw.Window, entered: c_int) callconv(.c) void {
     const state = glfw_win.getUserPointer(CallbackState) orelse return;
     state.event_bridge.onCursorEnter(entered != 0);
+}
+
+// =============================================================================
+// Promise Rejection Tracker
+// =============================================================================
+
+fn promiseRejectionTracker(
+    _: void,
+    ctx: *quickjs.Context,
+    _: quickjs.Value,
+    reason: quickjs.Value,
+    is_handled: bool,
+) void {
+    if (is_handled) return;
+
+    if (reason.toCString(ctx)) |msg| {
+        log.err("unhandled promise rejection: {s}", .{std.mem.span(msg)});
+        ctx.freeCString(msg);
+    } else {
+        log.err("unhandled promise rejection (non-string reason)", .{});
+    }
 }
