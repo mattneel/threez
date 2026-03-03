@@ -166,6 +166,59 @@
     return typeof __native !== "undefined" ? __native : void 0;
   }
 
+  // bootstrap/gpu.ts
+  var GPUQueue = class {
+    _handle;
+    constructor(handle) {
+      this._handle = handle;
+    }
+    // Future: submit(), writeBuffer(), writeTexture(), etc.
+  };
+  var GPUDevice = class extends EventTarget {
+    _handle;
+    queue;
+    constructor(handle) {
+      super();
+      const native = getNative();
+      const queueHandle = native?.gpuGetQueue?.(handle) ?? 0;
+      this._handle = handle;
+      this.queue = new GPUQueue(queueHandle);
+    }
+    destroy() {
+    }
+  };
+  var GPUAdapter = class {
+    _handle;
+    constructor(handle) {
+      this._handle = handle;
+    }
+    async requestDevice(_descriptor) {
+      const native = getNative();
+      const handle = native?.gpuRequestDevice?.(this._handle) ?? 0;
+      return new GPUDevice(handle);
+    }
+    // Stub properties that Three.js may check
+    get features() {
+      return /* @__PURE__ */ new Set();
+    }
+    get limits() {
+      return {};
+    }
+  };
+  var GPU = class {
+    async requestAdapter(_options) {
+      const native = getNative();
+      if (!native?.gpuRequestAdapter) {
+        return null;
+      }
+      const handle = native.gpuRequestAdapter();
+      return new GPUAdapter(handle);
+    }
+    getPreferredCanvasFormat() {
+      return "bgra8unorm";
+    }
+  };
+
   // bootstrap/dom.ts
   var CanvasStub = class extends EventTarget {
     width = 800;
@@ -214,23 +267,8 @@
     }
   };
   function createNavigator() {
-    const gpu = {
-      requestAdapter() {
-        const native = getNative();
-        if (native?.gpuRequestAdapter) {
-          return Promise.resolve(native.gpuRequestAdapter());
-        }
-        return Promise.resolve({
-          requestDevice() {
-            return Promise.resolve({});
-          },
-          features: /* @__PURE__ */ new Set(),
-          limits: {}
-        });
-      }
-    };
     return {
-      gpu,
+      gpu: new GPU(),
       userAgent: "threez/0.1.0",
       language: "en-US",
       platform: "threez"
@@ -306,6 +344,209 @@
     return { canvas, navigator, document, window };
   }
 
+  // bootstrap/fetch.ts
+  function guessContentType(url) {
+    const dot = url.lastIndexOf(".");
+    if (dot === -1) return "application/octet-stream";
+    const ext = url.slice(dot).toLowerCase().split("?")[0].split("#")[0];
+    switch (ext) {
+      case ".json":
+        return "application/json";
+      case ".js":
+      case ".mjs":
+        return "application/javascript";
+      case ".html":
+      case ".htm":
+        return "text/html";
+      case ".css":
+        return "text/css";
+      case ".txt":
+        return "text/plain";
+      case ".png":
+        return "image/png";
+      case ".jpg":
+      case ".jpeg":
+        return "image/jpeg";
+      case ".gif":
+        return "image/gif";
+      case ".svg":
+        return "image/svg+xml";
+      case ".glb":
+        return "model/gltf-binary";
+      case ".gltf":
+        return "model/gltf+json";
+      case ".wasm":
+        return "application/wasm";
+      case ".xml":
+        return "application/xml";
+      default:
+        return "application/octet-stream";
+    }
+  }
+  var FetchHeaders = class {
+    _map = {};
+    constructor(init) {
+      if (init) {
+        for (const key of Object.keys(init)) {
+          this._map[key.toLowerCase()] = init[key];
+        }
+      }
+    }
+    get(name) {
+      return this._map[name.toLowerCase()] ?? null;
+    }
+    has(name) {
+      return name.toLowerCase() in this._map;
+    }
+    set(name, value) {
+      this._map[name.toLowerCase()] = value;
+    }
+  };
+  var FetchResponse = class {
+    ok;
+    status;
+    statusText;
+    url;
+    headers;
+    _body;
+    constructor(body, status, statusText, url, headers) {
+      this._body = body;
+      this.ok = status >= 200 && status < 300;
+      this.status = status;
+      this.statusText = statusText;
+      this.url = url;
+      this.headers = new FetchHeaders(headers);
+    }
+    text() {
+      const bytes = this._body;
+      const g2 = globalThis;
+      if (typeof g2.TextDecoder !== "undefined") {
+        return Promise.resolve(new g2.TextDecoder().decode(bytes));
+      }
+      let str = "";
+      for (let i = 0; i < bytes.length; i++) {
+        str += String.fromCharCode(bytes[i]);
+      }
+      return Promise.resolve(str);
+    }
+    json() {
+      return this.text().then((t) => JSON.parse(t));
+    }
+    arrayBuffer() {
+      const buf = this._body.buffer.slice(
+        this._body.byteOffset,
+        this._body.byteOffset + this._body.byteLength
+      );
+      return Promise.resolve(buf);
+    }
+  };
+  function decodeURIBytes(str) {
+    const parts = [];
+    for (let i = 0; i < str.length; i++) {
+      if (str[i] === "%" && i + 2 < str.length) {
+        parts.push(parseInt(str.slice(i + 1, i + 3), 16));
+        i += 2;
+      } else {
+        parts.push(str.charCodeAt(i));
+      }
+    }
+    return new Uint8Array(parts);
+  }
+  function fetchDataURI(url) {
+    const rest = url.slice(5);
+    const commaIdx = rest.indexOf(",");
+    if (commaIdx === -1) {
+      return new FetchResponse(
+        new Uint8Array(0),
+        400,
+        "Bad Request",
+        url,
+        { "content-type": "text/plain" }
+      );
+    }
+    const meta = rest.slice(0, commaIdx);
+    const data = rest.slice(commaIdx + 1);
+    const isBase64 = meta.endsWith(";base64");
+    const mediaType = isBase64 ? meta.slice(0, -7) : meta;
+    const contentType = mediaType || "text/plain;charset=US-ASCII";
+    let body;
+    if (isBase64) {
+      const decoded = typeof __native_decodeBase64 === "function" ? __native_decodeBase64(data) : null;
+      body = decoded ?? new Uint8Array(0);
+    } else {
+      body = decodeURIBytes(data);
+    }
+    return new FetchResponse(body, 200, "OK", url, {
+      "content-type": contentType
+    });
+  }
+  function isLocalPath(url) {
+    if (url.startsWith("./") || url.startsWith("../") || url.startsWith("/")) {
+      return true;
+    }
+    if (!url.includes("://") && !url.startsWith("data:")) {
+      return true;
+    }
+    return false;
+  }
+  function fetchPolyfill(input) {
+    const url = typeof input === "string" ? input : input.url ?? input.toString();
+    if (url.startsWith("data:")) {
+      try {
+        return Promise.resolve(fetchDataURI(url));
+      } catch {
+        return Promise.resolve(
+          new FetchResponse(new Uint8Array(0), 400, "Bad Request", url, {})
+        );
+      }
+    }
+    if (isLocalPath(url)) {
+      if (typeof __native_readFileSync !== "function") {
+        return Promise.resolve(
+          new FetchResponse(
+            new Uint8Array(0),
+            500,
+            "Internal Error",
+            url,
+            {}
+          )
+        );
+      }
+      const bytes = __native_readFileSync(url);
+      if (bytes === null) {
+        return Promise.resolve(
+          new FetchResponse(
+            new Uint8Array(0),
+            404,
+            "Not Found",
+            url,
+            { "content-type": "text/plain" }
+          )
+        );
+      }
+      const contentType = guessContentType(url);
+      return Promise.resolve(
+        new FetchResponse(bytes, 200, "OK", url, {
+          "content-type": contentType
+        })
+      );
+    }
+    return Promise.resolve(
+      new FetchResponse(
+        new Uint8Array(0),
+        0,
+        "Network request not supported",
+        url,
+        {}
+      )
+    );
+  }
+  function installFetch() {
+    const g2 = globalThis;
+    g2.fetch = fetchPolyfill;
+    g2.Response = FetchResponse;
+  }
+
   // bootstrap/index.ts
   var dom = createDOM();
   var g = globalThis;
@@ -323,4 +564,5 @@
   g.innerWidth = dom.window.innerWidth;
   g.innerHeight = dom.window.innerHeight;
   g.devicePixelRatio = dom.window.devicePixelRatio;
+  installFetch();
 })();

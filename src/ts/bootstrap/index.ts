@@ -9,6 +9,7 @@
 import { EventTarget } from "./event-target";
 import { Event, PointerEvent, WheelEvent, KeyboardEvent } from "./events";
 import { createDOM } from "./dom";
+import { installFetch } from "./fetch";
 
 // Create the wired-up DOM instances
 const dom = createDOM();
@@ -36,3 +37,6 @@ g.cancelAnimationFrame = (id: number) =>
 g.innerWidth = dom.window.innerWidth;
 g.innerHeight = dom.window.innerHeight;
 g.devicePixelRatio = dom.window.devicePixelRatio;
+
+// Install fetch() polyfill for local filesystem access
+installFetch();

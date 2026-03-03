@@ -7,6 +7,7 @@
 
 import { EventTarget } from "./event-target";
 import { getNative } from "./native";
+import { GPU } from "./gpu";
 
 // ---------------------------------------------------------------------------
 // Canvas stub
@@ -80,35 +81,14 @@ export class CanvasStub extends EventTarget {
 // Navigator stub
 // ---------------------------------------------------------------------------
 
-export interface GPUStub {
-  requestAdapter(): Promise<any>;
-}
-
 function createNavigator(): {
-  gpu: GPUStub;
+  gpu: GPU;
   userAgent: string;
   language: string;
   platform: string;
 } {
-  const gpu: GPUStub = {
-    requestAdapter() {
-      const native = getNative();
-      if (native?.gpuRequestAdapter) {
-        return Promise.resolve(native.gpuRequestAdapter());
-      }
-      // Return a stub adapter when no native bridge
-      return Promise.resolve({
-        requestDevice() {
-          return Promise.resolve({});
-        },
-        features: new Set(),
-        limits: {},
-      });
-    },
-  };
-
   return {
-    gpu,
+    gpu: new GPU(),
     userAgent: "threez/0.1.0",
     language: "en-US",
     platform: "threez",

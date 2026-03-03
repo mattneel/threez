@@ -8,9 +8,12 @@
  */
 
 export interface NativeBridge {
-  /** Request a GPU device (returns an opaque handle). */
-  gpuRequestAdapter?(): unknown;
-  gpuRequestDevice?(adapter: unknown): unknown;
+  /** Request the pre-created GPU adapter (returns an opaque handle ID). */
+  gpuRequestAdapter?(): number;
+  /** Request the pre-created GPU device (returns an opaque handle ID). */
+  gpuRequestDevice?(adapterId: number): number;
+  /** Get the pre-created queue for a device (returns an opaque handle ID). */
+  gpuGetQueue?(deviceId: number): number;
 
   /** Get the current window/surface dimensions. */
   getWindowWidth?(): number;
@@ -23,6 +26,12 @@ export interface NativeBridge {
 
   /** Logging bridge. */
   log?(level: string, ...args: unknown[]): void;
+
+  /** Read a file synchronously, returning raw bytes or null on failure. */
+  readFileSync?(path: string): Uint8Array | null;
+
+  /** Decode a base64 string to raw bytes, or null on invalid input. */
+  decodeBase64?(data: string): Uint8Array | null;
 }
 
 /**
