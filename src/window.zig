@@ -21,7 +21,7 @@ pub const Window = struct {
         errdefer zglfw.terminate();
 
         // Tell GLFW we do not want an OpenGL context — we are using WebGPU/Dawn.
-        zglfw.Window.Hint.set(.client_api, .no_api);
+        zglfw.WindowHint.set(.client_api, .no_api);
 
         const glfw_window = try zglfw.createWindow(
             @intCast(config.width),

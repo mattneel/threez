@@ -22,6 +22,8 @@ pub fn build(b: *std.Build) void {
     lib_mod.addImport("quickjs", qjs_mod);
 
     // --- Executable ---
+    // QuickJS Value is an extern struct; the default backend cannot
+    // lower its return type yet (Zig compiler TODO), so use LLVM.
     const exe = b.addExecutable(.{
         .name = "threez",
         .root_module = b.createModule(.{
@@ -29,6 +31,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         }),
+        .use_llvm = true,
     });
 
     // --- Dependencies ---
@@ -51,6 +54,10 @@ pub fn build(b: *std.Build) void {
     const zgpu_mod = zgpu_dep.module("root");
     lib_mod.addImport("zgpu", zgpu_mod);
     exe.root_module.addImport("zgpu", zgpu_mod);
+
+    // quickjs — JavaScript engine (needed by main.zig for JS runtime)
+    exe.root_module.addImport("quickjs", qjs_mod);
+    exe.linkLibrary(qjs_lib);
 
     // Dawn/WebGPU native linking:
     // zgpu's zdawn artifact compiles dawn.cpp + dawn_proc.c and links libdawn.
@@ -127,13 +134,22 @@ pub fn build(b: *std.Build) void {
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
+    // main.zig has no unit tests but must still compile during `zig build test`.
+    // It imports quickjs, zglfw, zgpu, so we give the test module the same deps.
     const exe_unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quickjs", .module = qjs_mod },
+                .{ .name = "zgpu", .module = zgpu_mod },
+                .{ .name = "zglfw", .module = zglfw_mod },
+            },
         }),
+        .use_llvm = true,
     });
+    exe_unit_tests.linkLibrary(qjs_lib);
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
