@@ -1,0 +1,13 @@
+{
+  "name": "threez-bootstrap",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "esbuild --bundle bootstrap/index.ts --outfile=dist/bootstrap.js --format=iife --platform=neutral --target=es2023",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  }
+}
