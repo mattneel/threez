@@ -77,6 +77,31 @@ export interface NativeBridge {
   gpuCreateComputePipeline?(deviceId: number, descriptor: object): number;
   /** Create a bind group, returning an opaque handle ID. */
   gpuCreateBindGroup?(deviceId: number, descriptor: object): number;
+
+  // --- T18: Command encoding / render pass ---
+
+  /** Create a command encoder, returning an opaque handle ID. */
+  gpuCreateCommandEncoder?(deviceId: number): number;
+  /** Begin a render pass on a command encoder, returning a render pass handle ID. */
+  gpuCommandEncoderBeginRenderPass?(encoderId: number, descriptor: object): number;
+  /** Set the pipeline on a render pass encoder. */
+  gpuRenderPassSetPipeline?(passId: number, pipelineId: number): void;
+  /** Set a bind group on a render pass encoder. */
+  gpuRenderPassSetBindGroup?(passId: number, index: number, bindGroupId: number): void;
+  /** Set a vertex buffer on a render pass encoder. */
+  gpuRenderPassSetVertexBuffer?(passId: number, slot: number, bufferId: number, offset?: number, size?: number): void;
+  /** Set the index buffer on a render pass encoder. */
+  gpuRenderPassSetIndexBuffer?(passId: number, bufferId: number, format: string, offset?: number, size?: number): void;
+  /** Record a draw call on a render pass encoder. */
+  gpuRenderPassDraw?(passId: number, vertexCount: number, instanceCount?: number, firstVertex?: number, firstInstance?: number): void;
+  /** Record an indexed draw call on a render pass encoder. */
+  gpuRenderPassDrawIndexed?(passId: number, indexCount: number, instanceCount?: number, firstIndex?: number, baseVertex?: number, firstInstance?: number): void;
+  /** End a render pass, freeing the render pass handle. */
+  gpuRenderPassEnd?(passId: number): void;
+  /** Finish command encoding, returning a command buffer handle ID. */
+  gpuCommandEncoderFinish?(encoderId: number): number;
+  /** Submit command buffers to a queue. */
+  gpuQueueSubmit?(queueId: number, commandBuffers: number[]): void;
 }
 
 /**

@@ -261,12 +261,71 @@
       return new GPUBindGroupLayout(0);
     }
   };
+  var GPUCommandBuffer = class {
+    _handle;
+    constructor(handle) {
+      this._handle = handle;
+    }
+  };
+  var GPURenderPassEncoder = class {
+    _handle;
+    constructor(handle) {
+      this._handle = handle;
+    }
+    setPipeline(pipeline) {
+      const native = getNative();
+      native?.gpuRenderPassSetPipeline?.(this._handle, pipeline._handle);
+    }
+    setBindGroup(index, bindGroup) {
+      const native = getNative();
+      native?.gpuRenderPassSetBindGroup?.(this._handle, index, bindGroup._handle);
+    }
+    setVertexBuffer(slot, buffer, offset, size) {
+      const native = getNative();
+      native?.gpuRenderPassSetVertexBuffer?.(this._handle, slot, buffer._handle, offset, size);
+    }
+    setIndexBuffer(buffer, format, offset, size) {
+      const native = getNative();
+      native?.gpuRenderPassSetIndexBuffer?.(this._handle, buffer._handle, format, offset, size);
+    }
+    draw(vertexCount, instanceCount, firstVertex, firstInstance) {
+      const native = getNative();
+      native?.gpuRenderPassDraw?.(this._handle, vertexCount, instanceCount, firstVertex, firstInstance);
+    }
+    drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance) {
+      const native = getNative();
+      native?.gpuRenderPassDrawIndexed?.(this._handle, indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
+    }
+    end() {
+      const native = getNative();
+      native?.gpuRenderPassEnd?.(this._handle);
+    }
+  };
+  var GPUCommandEncoder = class {
+    _handle;
+    constructor(handle) {
+      this._handle = handle;
+    }
+    beginRenderPass(descriptor) {
+      const native = getNative();
+      const handle = native?.gpuCommandEncoderBeginRenderPass?.(this._handle, descriptor) ?? 0;
+      return new GPURenderPassEncoder(handle);
+    }
+    finish() {
+      const native = getNative();
+      const handle = native?.gpuCommandEncoderFinish?.(this._handle) ?? 0;
+      return new GPUCommandBuffer(handle);
+    }
+  };
   var GPUQueue = class {
     _handle;
     constructor(handle) {
       this._handle = handle;
     }
-    submit(_commandBuffers) {
+    submit(commandBuffers) {
+      const native = getNative();
+      const handles = commandBuffers.map((cb) => cb._handle);
+      native?.gpuQueueSubmit?.(this._handle, handles);
     }
     writeBuffer(_buffer, _bufferOffset, _data, _dataOffset, _size) {
     }
@@ -331,6 +390,12 @@
       const native = getNative();
       const handle = native?.gpuCreateBindGroup?.(this._handle, descriptor) ?? 0;
       return new GPUBindGroup(handle);
+    }
+    // --- T18: Command encoding ---
+    createCommandEncoder(_descriptor) {
+      const native = getNative();
+      const handle = native?.gpuCreateCommandEncoder?.(this._handle) ?? 0;
+      return new GPUCommandEncoder(handle);
     }
   };
   var GPUAdapter = class {

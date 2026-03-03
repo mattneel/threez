@@ -69,6 +69,17 @@ pub const GpuBridge = struct {
     ///   - gpuCreateRenderPipeline(deviceId, descriptor) → handle ID
     ///   - gpuCreateComputePipeline(deviceId, descriptor) → handle ID
     ///   - gpuCreateBindGroup(deviceId, descriptor) → handle ID
+    ///   - gpuCreateCommandEncoder(deviceId) → command encoder handle ID
+    ///   - gpuCommandEncoderBeginRenderPass(encoderId, descriptor) → render pass handle ID
+    ///   - gpuRenderPassSetPipeline(passId, pipelineId) → undefined
+    ///   - gpuRenderPassSetBindGroup(passId, index, bindGroupId) → undefined
+    ///   - gpuRenderPassSetVertexBuffer(passId, slot, bufferId, offset?, size?) → undefined
+    ///   - gpuRenderPassSetIndexBuffer(passId, bufferId, format, offset?, size?) → undefined
+    ///   - gpuRenderPassDraw(passId, vertexCount, instanceCount?, ...) → undefined
+    ///   - gpuRenderPassDrawIndexed(passId, indexCount, instanceCount?, ...) → undefined
+    ///   - gpuRenderPassEnd(passId) → undefined
+    ///   - gpuCommandEncoderFinish(encoderId) → command buffer handle ID
+    ///   - gpuQueueSubmit(queueId, commandBuffers[]) → undefined
     pub fn register(self: *const GpuBridge, ctx: *Context) !void {
         const global = ctx.getGlobalObject();
         defer global.deinit(ctx);
@@ -245,6 +256,118 @@ pub const GpuBridge = struct {
             &.{ht_ptr_num},
         );
         native_obj.setPropertyStr(ctx, "gpuCreateBindGroup", create_bg_fn) catch return error.JSError;
+
+        // --- T18: Command encoding / render pass functions ---
+
+        // gpuCreateCommandEncoder(deviceId) → command encoder handle ID
+        const create_ce_fn = Value.initCFunctionData(
+            ctx,
+            &gpuCreateCommandEncoderNative,
+            1,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuCreateCommandEncoder", create_ce_fn) catch return error.JSError;
+
+        // gpuCommandEncoderBeginRenderPass(encoderId, descriptor) → render pass handle ID
+        const begin_rp_fn = Value.initCFunctionData(
+            ctx,
+            &gpuCommandEncoderBeginRenderPassNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuCommandEncoderBeginRenderPass", begin_rp_fn) catch return error.JSError;
+
+        // gpuRenderPassSetPipeline(passId, pipelineId) → undefined
+        const rp_set_pipeline_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassSetPipelineNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassSetPipeline", rp_set_pipeline_fn) catch return error.JSError;
+
+        // gpuRenderPassSetBindGroup(passId, index, bindGroupId) → undefined
+        const rp_set_bg_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassSetBindGroupNative,
+            3,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassSetBindGroup", rp_set_bg_fn) catch return error.JSError;
+
+        // gpuRenderPassSetVertexBuffer(passId, slot, bufferId, offset?, size?) → undefined
+        const rp_set_vb_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassSetVertexBufferNative,
+            5,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassSetVertexBuffer", rp_set_vb_fn) catch return error.JSError;
+
+        // gpuRenderPassSetIndexBuffer(passId, bufferId, format, offset?, size?) → undefined
+        const rp_set_ib_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassSetIndexBufferNative,
+            5,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassSetIndexBuffer", rp_set_ib_fn) catch return error.JSError;
+
+        // gpuRenderPassDraw(passId, vertexCount, instanceCount?, firstVertex?, firstInstance?) → undefined
+        const rp_draw_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassDrawNative,
+            5,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassDraw", rp_draw_fn) catch return error.JSError;
+
+        // gpuRenderPassDrawIndexed(passId, indexCount, instanceCount?, firstIndex?, baseVertex?, firstInstance?) → undefined
+        const rp_draw_indexed_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassDrawIndexedNative,
+            6,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassDrawIndexed", rp_draw_indexed_fn) catch return error.JSError;
+
+        // gpuRenderPassEnd(passId) → undefined
+        const rp_end_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassEndNative,
+            1,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassEnd", rp_end_fn) catch return error.JSError;
+
+        // gpuCommandEncoderFinish(encoderId) → command buffer handle ID
+        const ce_finish_fn = Value.initCFunctionData(
+            ctx,
+            &gpuCommandEncoderFinishNative,
+            1,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuCommandEncoderFinish", ce_finish_fn) catch return error.JSError;
+
+        // gpuQueueSubmit(queueId, commandBuffers) → undefined
+        const queue_submit_fn = Value.initCFunctionData(
+            ctx,
+            &gpuQueueSubmitNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuQueueSubmit", queue_submit_fn) catch return error.JSError;
     }
 };
 
@@ -608,6 +731,351 @@ fn allocPipelineHandle(
     // Allocate handle
     const id = ht.alloc(dawn_handle) catch return Value.@"null";
     return Value.initFloat64(@floatFromInt(id.toNumber()));
+}
+
+// ---------------------------------------------------------------------------
+// T18: Command encoding / render pass native functions
+// ---------------------------------------------------------------------------
+
+/// __native.gpuCreateCommandEncoder(deviceId) → number (command encoder handle ID)
+///
+/// Validates the device handle, then allocates a command_encoder handle.
+fn gpuCreateCommandEncoderNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.@"null";
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.@"null";
+
+    // argv[0] = deviceId — validate device handle exists
+    if (argv.len < 1) return Value.@"null";
+    const device_id_val: Value = @bitCast(argv[0]);
+    const device_f64 = device_id_val.toFloat64(context) catch return Value.@"null";
+    const device_id = f64ToHandle(device_f64);
+    _ = ht.get(device_id) catch return Value.@"null";
+
+    // Allocate command encoder handle
+    const id = ht.alloc(.{ .command_encoder = {} }) catch return Value.@"null";
+    return Value.initFloat64(@floatFromInt(id.toNumber()));
+}
+
+/// __native.gpuCommandEncoderBeginRenderPass(encoderId, descriptor) → number (render pass handle ID)
+///
+/// Validates the encoder handle, then allocates a render_pass_encoder handle.
+/// The descriptor is accepted but not parsed yet (real Dawn calls come later).
+fn gpuCommandEncoderBeginRenderPassNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.@"null";
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.@"null";
+
+    // argv[0] = encoderId — validate encoder handle exists
+    if (argv.len < 2) return Value.@"null";
+    const encoder_id_val: Value = @bitCast(argv[0]);
+    const encoder_f64 = encoder_id_val.toFloat64(context) catch return Value.@"null";
+    const encoder_id = f64ToHandle(encoder_f64);
+    _ = ht.get(encoder_id) catch return Value.@"null";
+
+    // argv[1] = descriptor (accepted but not parsed yet)
+    // Real Dawn integration will parse colorAttachments, depthStencilAttachment, etc.
+
+    // Allocate render pass encoder handle
+    const id = ht.alloc(.{ .render_pass_encoder = {} }) catch return Value.@"null";
+    return Value.initFloat64(@floatFromInt(id.toNumber()));
+}
+
+/// __native.gpuRenderPassSetPipeline(passId, pipelineId) → undefined
+///
+/// Stub — stores pipeline reference for the render pass. Real Dawn calls come later.
+fn gpuRenderPassSetPipelineNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    // Validate pass handle
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_id = f64ToHandle(pass_f64);
+    _ = ht.get(pass_id) catch return Value.undefined;
+
+    // Validate pipeline handle
+    const pipeline_id_val: Value = @bitCast(argv[1]);
+    const pipeline_f64 = pipeline_id_val.toFloat64(context) catch return Value.undefined;
+    const pipeline_id = f64ToHandle(pipeline_f64);
+    _ = ht.get(pipeline_id) catch return Value.undefined;
+
+    return Value.undefined;
+}
+
+/// __native.gpuRenderPassSetBindGroup(passId, index, bindGroupId) → undefined
+///
+/// Stub — stores bind group reference for the render pass.
+fn gpuRenderPassSetBindGroupNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 3) return Value.undefined;
+
+    // Validate pass handle
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_id = f64ToHandle(pass_f64);
+    _ = ht.get(pass_id) catch return Value.undefined;
+
+    // argv[1] = index (group index, accepted but not used yet)
+    // argv[2] = bindGroupId — validate handle
+    const bg_id_val: Value = @bitCast(argv[2]);
+    const bg_f64 = bg_id_val.toFloat64(context) catch return Value.undefined;
+    const bg_id = f64ToHandle(bg_f64);
+    _ = ht.get(bg_id) catch return Value.undefined;
+
+    return Value.undefined;
+}
+
+/// __native.gpuRenderPassSetVertexBuffer(passId, slot, bufferId, offset?, size?) → undefined
+///
+/// Stub — stores vertex buffer reference for the render pass.
+fn gpuRenderPassSetVertexBufferNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 3) return Value.undefined;
+
+    // Validate pass handle
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_id = f64ToHandle(pass_f64);
+    _ = ht.get(pass_id) catch return Value.undefined;
+
+    // argv[1] = slot (accepted but not used yet)
+    // argv[2] = bufferId — validate handle
+    const buf_id_val: Value = @bitCast(argv[2]);
+    const buf_f64 = buf_id_val.toFloat64(context) catch return Value.undefined;
+    const buf_id = f64ToHandle(buf_f64);
+    _ = ht.get(buf_id) catch return Value.undefined;
+
+    // argv[3] = offset (optional), argv[4] = size (optional)
+    // Accepted but not used until real Dawn integration.
+
+    return Value.undefined;
+}
+
+/// __native.gpuRenderPassSetIndexBuffer(passId, bufferId, format, offset?, size?) → undefined
+///
+/// Stub — stores index buffer reference for the render pass.
+fn gpuRenderPassSetIndexBufferNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 3) return Value.undefined;
+
+    // Validate pass handle
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_id = f64ToHandle(pass_f64);
+    _ = ht.get(pass_id) catch return Value.undefined;
+
+    // argv[1] = bufferId — validate handle
+    const buf_id_val: Value = @bitCast(argv[1]);
+    const buf_f64 = buf_id_val.toFloat64(context) catch return Value.undefined;
+    const buf_id = f64ToHandle(buf_f64);
+    _ = ht.get(buf_id) catch return Value.undefined;
+
+    // argv[2] = format (string, e.g. "uint16" or "uint32"), accepted but not used yet
+    // argv[3] = offset (optional), argv[4] = size (optional)
+
+    return Value.undefined;
+}
+
+/// __native.gpuRenderPassDraw(passId, vertexCount, instanceCount?, firstVertex?, firstInstance?) → undefined
+///
+/// Stub — records draw call. Real Dawn calls come later.
+fn gpuRenderPassDrawNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    // Validate pass handle
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_id = f64ToHandle(pass_f64);
+    _ = ht.get(pass_id) catch return Value.undefined;
+
+    // argv[1] = vertexCount (required)
+    // argv[2] = instanceCount (optional)
+    // argv[3] = firstVertex (optional)
+    // argv[4] = firstInstance (optional)
+    // All accepted but not used until real Dawn integration.
+
+    return Value.undefined;
+}
+
+/// __native.gpuRenderPassDrawIndexed(passId, indexCount, instanceCount?, firstIndex?, baseVertex?, firstInstance?) → undefined
+///
+/// Stub — records indexed draw call. Real Dawn calls come later.
+fn gpuRenderPassDrawIndexedNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    // Validate pass handle
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_id = f64ToHandle(pass_f64);
+    _ = ht.get(pass_id) catch return Value.undefined;
+
+    // argv[1] = indexCount (required)
+    // argv[2] = instanceCount (optional)
+    // argv[3] = firstIndex (optional)
+    // argv[4] = baseVertex (optional)
+    // argv[5] = firstInstance (optional)
+    // All accepted but not used until real Dawn integration.
+
+    return Value.undefined;
+}
+
+/// __native.gpuRenderPassEnd(passId) → undefined
+///
+/// Frees the render pass encoder handle.
+fn gpuRenderPassEndNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 1) return Value.undefined;
+
+    // Get pass handle and free it
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_id = f64ToHandle(pass_f64);
+
+    ht.free(pass_id) catch {};
+
+    return Value.undefined;
+}
+
+/// __native.gpuCommandEncoderFinish(encoderId) → number (command buffer handle ID)
+///
+/// Allocates a command_buffer handle, frees the encoder handle, and returns
+/// the command buffer handle ID.
+fn gpuCommandEncoderFinishNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.@"null";
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.@"null";
+
+    if (argv.len < 1) return Value.@"null";
+
+    // Validate encoder handle
+    const encoder_id_val: Value = @bitCast(argv[0]);
+    const encoder_f64 = encoder_id_val.toFloat64(context) catch return Value.@"null";
+    const encoder_id = f64ToHandle(encoder_f64);
+    _ = ht.get(encoder_id) catch return Value.@"null";
+
+    // Allocate command buffer handle
+    const cb_id = ht.alloc(.{ .command_buffer = {} }) catch return Value.@"null";
+
+    // Free the encoder handle (consumed by finish)
+    ht.free(encoder_id) catch {};
+
+    return Value.initFloat64(@floatFromInt(cb_id.toNumber()));
+}
+
+/// __native.gpuQueueSubmit(queueId, commandBuffers) → undefined
+///
+/// Accepts an array of command buffer handle IDs, frees each one (consumed by submit).
+/// Real Dawn submit calls come later.
+fn gpuQueueSubmitNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    // argv[0] = queueId — validate queue handle
+    const queue_id_val: Value = @bitCast(argv[0]);
+    const queue_f64 = queue_id_val.toFloat64(context) catch return Value.undefined;
+    const queue_id = f64ToHandle(queue_f64);
+    _ = ht.get(queue_id) catch return Value.undefined;
+
+    // argv[1] = array of command buffer handle IDs
+    const arr_val: Value = @bitCast(argv[1]);
+    const len_val = arr_val.getPropertyStr(context, "length");
+    defer len_val.deinit(context);
+    const len = len_val.toFloat64(context) catch return Value.undefined;
+    const count: u32 = @intFromFloat(len);
+
+    // Free each command buffer handle (consumed by submit)
+    var i: u32 = 0;
+    while (i < count) : (i += 1) {
+        const elem = arr_val.getPropertyUint32(context, i);
+        defer elem.deinit(context);
+        const cb_f64 = elem.toFloat64(context) catch continue;
+        const cb_id = f64ToHandle(cb_f64);
+        ht.free(cb_id) catch {};
+    }
+
+    return Value.undefined;
 }
 
 /// Extract the *HandleTable pointer from closure data[0].
@@ -1451,4 +1919,310 @@ test "pointer round-trip through f64" {
 
     try testing.expect(back != null);
     try testing.expect(back.? == &ht);
+}
+
+// ---------------------------------------------------------------------------
+// T18: Command encoding / render pass tests
+// ---------------------------------------------------------------------------
+
+test "register creates command encoding functions on __native" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    var result = try engine.eval(
+        \\typeof __native.gpuCreateCommandEncoder === 'function' &&
+        \\typeof __native.gpuCommandEncoderBeginRenderPass === 'function' &&
+        \\typeof __native.gpuRenderPassSetPipeline === 'function' &&
+        \\typeof __native.gpuRenderPassSetBindGroup === 'function' &&
+        \\typeof __native.gpuRenderPassSetVertexBuffer === 'function' &&
+        \\typeof __native.gpuRenderPassSetIndexBuffer === 'function' &&
+        \\typeof __native.gpuRenderPassDraw === 'function' &&
+        \\typeof __native.gpuRenderPassDrawIndexed === 'function' &&
+        \\typeof __native.gpuRenderPassEnd === 'function' &&
+        \\typeof __native.gpuCommandEncoderFinish === 'function' &&
+        \\typeof __native.gpuQueueSubmit === 'function'
+    , "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuCreateCommandEncoder returns valid handle" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  return __native.gpuCreateCommandEncoder(devId);
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    const returned_f64 = try result.toFloat64();
+    const returned_id = f64ToHandle(returned_f64);
+
+    try testing.expect(ht.isValid(returned_id));
+
+    const entry = try ht.get(returned_id);
+    try testing.expectEqual(handle_table.HandleType.command_encoder, entry.handle_type);
+}
+
+test "gpuCreateCommandEncoder with invalid device returns null" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var result = __native.gpuCreateCommandEncoder(99999);
+        \\  return result === null;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "full command encoding chain: create → beginRenderPass → draw → end → finish → submit" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const initial_count = ht.activeCount();
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var queueId = __native.gpuGetQueue(devId);
+        \\  var encoderId = __native.gpuCreateCommandEncoder(devId);
+        \\  var passId = __native.gpuCommandEncoderBeginRenderPass(encoderId, {
+        \\    colorAttachments: [{ view: 0, loadOp: 'clear', storeOp: 'store' }]
+        \\  });
+        \\  __native.gpuRenderPassDraw(passId, 3);
+        \\  __native.gpuRenderPassEnd(passId);
+        \\  var cmdBuf = __native.gpuCommandEncoderFinish(encoderId);
+        \\  __native.gpuQueueSubmit(queueId, [cmdBuf]);
+        \\  return true;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+
+    // After the full chain, all transient handles should have been freed:
+    // - render_pass_encoder: freed by gpuRenderPassEnd
+    // - command_encoder: freed by gpuCommandEncoderFinish
+    // - command_buffer: freed by gpuQueueSubmit
+    // Only the initial 3 handles (adapter, device, queue) should remain
+    try testing.expectEqual(initial_count, ht.activeCount());
+}
+
+test "gpuCommandEncoderFinish returns valid command buffer handle" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var encoderId = __native.gpuCreateCommandEncoder(devId);
+        \\  return __native.gpuCommandEncoderFinish(encoderId);
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    const returned_f64 = try result.toFloat64();
+    const returned_id = f64ToHandle(returned_f64);
+
+    try testing.expect(ht.isValid(returned_id));
+
+    const entry = try ht.get(returned_id);
+    try testing.expectEqual(handle_table.HandleType.command_buffer, entry.handle_type);
+}
+
+test "gpuCommandEncoderFinish frees the encoder handle" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const initial_count = ht.activeCount();
+
+    // Create encoder, then finish — encoder freed + command_buffer allocated = net 0
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var encoderId = __native.gpuCreateCommandEncoder(devId);
+        \\  var cmdBuf = __native.gpuCommandEncoderFinish(encoderId);
+        \\  return cmdBuf;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    // Encoder freed, command buffer allocated → net change is 0 from the encoder alloc
+    // But actually: +1 encoder, then finish: -1 encoder +1 cmd_buf = net +1
+    try testing.expectEqual(initial_count + 1, ht.activeCount());
+
+    // Verify the command buffer handle is valid
+    const cmd_f64 = try result.toFloat64();
+    const cmd_id = f64ToHandle(cmd_f64);
+    try testing.expect(ht.isValid(cmd_id));
+
+    const entry = try ht.get(cmd_id);
+    try testing.expectEqual(handle_table.HandleType.command_buffer, entry.handle_type);
+}
+
+test "gpuRenderPassEnd frees the render pass handle" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const count_before_encoder = ht.activeCount();
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var encoderId = __native.gpuCreateCommandEncoder(devId);
+        \\  var passId = __native.gpuCommandEncoderBeginRenderPass(encoderId, {});
+        \\  __native.gpuRenderPassEnd(passId);
+        \\  return encoderId;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    // After end(), the render pass should be freed but encoder should remain
+    // So we should have initial + 1 (the encoder)
+    try testing.expectEqual(count_before_encoder + 1, ht.activeCount());
+}
+
+test "full chain with setPipeline, setBindGroup, setVertexBuffer, setIndexBuffer, drawIndexed" {
+    var ht = try HandleTable.init(testing.allocator, 64);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var queueId = __native.gpuGetQueue(devId);
+        \\  var pipeline = __native.gpuCreateRenderPipeline(devId, {});
+        \\  var bindGroup = __native.gpuCreateBindGroup(devId, {});
+        \\  var vertexBuf = __native.gpuCreateBuffer(0, {size: 256, usage: 32});
+        \\  var indexBuf = __native.gpuCreateBuffer(0, {size: 64, usage: 16});
+        \\  var encoderId = __native.gpuCreateCommandEncoder(devId);
+        \\  var passId = __native.gpuCommandEncoderBeginRenderPass(encoderId, {});
+        \\  __native.gpuRenderPassSetPipeline(passId, pipeline);
+        \\  __native.gpuRenderPassSetBindGroup(passId, 0, bindGroup);
+        \\  __native.gpuRenderPassSetVertexBuffer(passId, 0, vertexBuf, 0, 256);
+        \\  __native.gpuRenderPassSetIndexBuffer(passId, indexBuf, 'uint16', 0, 64);
+        \\  __native.gpuRenderPassDrawIndexed(passId, 6, 1, 0, 0, 0);
+        \\  __native.gpuRenderPassEnd(passId);
+        \\  var cmdBuf = __native.gpuCommandEncoderFinish(encoderId);
+        \\  __native.gpuQueueSubmit(queueId, [cmdBuf]);
+        \\  return true;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuQueueSubmit frees multiple command buffers" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const initial_count = ht.activeCount();
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var queueId = __native.gpuGetQueue(devId);
+        \\  var enc1 = __native.gpuCreateCommandEncoder(devId);
+        \\  var cb1 = __native.gpuCommandEncoderFinish(enc1);
+        \\  var enc2 = __native.gpuCreateCommandEncoder(devId);
+        \\  var cb2 = __native.gpuCommandEncoderFinish(enc2);
+        \\  __native.gpuQueueSubmit(queueId, [cb1, cb2]);
+        \\  return true;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+
+    // All transient handles should be freed: 2 encoders + 2 command buffers
+    // Only initial handles (adapter, device, queue) remain
+    try testing.expectEqual(initial_count, ht.activeCount());
 }

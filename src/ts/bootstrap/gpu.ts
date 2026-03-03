@@ -162,6 +162,89 @@ export class GPUComputePipeline {
 }
 
 // ---------------------------------------------------------------------------
+// GPUCommandBuffer
+// ---------------------------------------------------------------------------
+
+export class GPUCommandBuffer {
+  _handle: number;
+
+  constructor(handle: number) {
+    this._handle = handle;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GPURenderPassEncoder
+// ---------------------------------------------------------------------------
+
+export class GPURenderPassEncoder {
+  _handle: number;
+
+  constructor(handle: number) {
+    this._handle = handle;
+  }
+
+  setPipeline(pipeline: GPURenderPipeline): void {
+    const native = getNative();
+    native?.gpuRenderPassSetPipeline?.(this._handle, pipeline._handle);
+  }
+
+  setBindGroup(index: number, bindGroup: GPUBindGroup): void {
+    const native = getNative();
+    native?.gpuRenderPassSetBindGroup?.(this._handle, index, bindGroup._handle);
+  }
+
+  setVertexBuffer(slot: number, buffer: GPUBuffer, offset?: number, size?: number): void {
+    const native = getNative();
+    native?.gpuRenderPassSetVertexBuffer?.(this._handle, slot, buffer._handle, offset, size);
+  }
+
+  setIndexBuffer(buffer: GPUBuffer, format: string, offset?: number, size?: number): void {
+    const native = getNative();
+    native?.gpuRenderPassSetIndexBuffer?.(this._handle, buffer._handle, format, offset, size);
+  }
+
+  draw(vertexCount: number, instanceCount?: number, firstVertex?: number, firstInstance?: number): void {
+    const native = getNative();
+    native?.gpuRenderPassDraw?.(this._handle, vertexCount, instanceCount, firstVertex, firstInstance);
+  }
+
+  drawIndexed(indexCount: number, instanceCount?: number, firstIndex?: number, baseVertex?: number, firstInstance?: number): void {
+    const native = getNative();
+    native?.gpuRenderPassDrawIndexed?.(this._handle, indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
+  }
+
+  end(): void {
+    const native = getNative();
+    native?.gpuRenderPassEnd?.(this._handle);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GPUCommandEncoder
+// ---------------------------------------------------------------------------
+
+export class GPUCommandEncoder {
+  _handle: number;
+
+  constructor(handle: number) {
+    this._handle = handle;
+  }
+
+  beginRenderPass(descriptor: object): GPURenderPassEncoder {
+    const native = getNative();
+    const handle = native?.gpuCommandEncoderBeginRenderPass?.(this._handle, descriptor) as number ?? 0;
+    return new GPURenderPassEncoder(handle);
+  }
+
+  finish(): GPUCommandBuffer {
+    const native = getNative();
+    const handle = native?.gpuCommandEncoderFinish?.(this._handle) as number ?? 0;
+    return new GPUCommandBuffer(handle);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // GPUQueue
 // ---------------------------------------------------------------------------
 
@@ -172,8 +255,10 @@ export class GPUQueue {
     this._handle = handle;
   }
 
-  submit(_commandBuffers: any[]): void {
-    // Stub — wired in T18 (command encoding)
+  submit(commandBuffers: GPUCommandBuffer[]): void {
+    const native = getNative();
+    const handles = commandBuffers.map(cb => cb._handle);
+    native?.gpuQueueSubmit?.(this._handle, handles);
   }
 
   writeBuffer(
@@ -183,7 +268,7 @@ export class GPUQueue {
     _dataOffset?: number,
     _size?: number,
   ): void {
-    // Stub — wired in T18
+    // Stub — real implementation in a future ticket
   }
 
   writeTexture(
@@ -192,7 +277,7 @@ export class GPUQueue {
     _dataLayout: object,
     _size: object,
   ): void {
-    // Stub — wired in T18
+    // Stub — real implementation in a future ticket
   }
 }
 
@@ -272,6 +357,14 @@ export class GPUDevice extends EventTarget {
     const native = getNative();
     const handle = native?.gpuCreateBindGroup?.(this._handle, descriptor) as number ?? 0;
     return new GPUBindGroup(handle);
+  }
+
+  // --- T18: Command encoding ---
+
+  createCommandEncoder(_descriptor?: object): GPUCommandEncoder {
+    const native = getNative();
+    const handle = native?.gpuCreateCommandEncoder?.(this._handle) as number ?? 0;
+    return new GPUCommandEncoder(handle);
   }
 }
 
