@@ -545,6 +545,15 @@ export class GPUDevice extends EventTarget {
     // Future: call __native.gpuDestroyDevice(this._handle)
   }
 
+  pushErrorScope(_filter: string): void {
+    // Stub — no error scopes in stub mode
+  }
+
+  popErrorScope(): Promise<null> {
+    // Always resolve with null (no error)
+    return Promise.resolve(null);
+  }
+
   // --- T16: Resource creation ---
 
   createBuffer(descriptor: { size: number; usage: number; mappedAtCreation?: boolean }): GPUBuffer {

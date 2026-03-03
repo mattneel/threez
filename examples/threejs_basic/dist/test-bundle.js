@@ -87176,6 +87176,7 @@ var<${access}> ${name} : ${structName};`;
             } catch (e) {
               accessLog.errors.push(`renderer.render(): ${e.message}`);
               console.error("renderer.render() failed:", e.message);
+              console.error("Stack:", e.stack);
             }
           }
         } catch (e) {
