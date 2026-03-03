@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const zgpu = @import("zgpu");
 const zglfw = @import("zglfw");
 
@@ -18,8 +19,11 @@ pub const Window = struct {
     /// Create a GLFW window backed by a zgpu GraphicsContext (Dawn/WebGPU).
     /// The GraphicsContext owns the GPU instance, device, surface, and swapchain.
     pub fn init(allocator: std.mem.Allocator, config: WindowConfig) !Window {
-        // Initialise GLFW — force X11 on Linux (Wayland+Vulkan doesn't present on WSLg)
-        try zglfw.initHint(.platform, zglfw.Platform.x11);
+        // Force X11 only on Linux (Wayland+Vulkan doesn't present on WSLg).
+        // Other platforms should use GLFW defaults.
+        if (builtin.os.tag == .linux) {
+            try zglfw.initHint(.platform, zglfw.Platform.x11);
+        }
         try zglfw.init();
         errdefer zglfw.terminate();
 

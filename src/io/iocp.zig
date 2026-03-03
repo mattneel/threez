@@ -110,7 +110,14 @@ pub const IocpPoll = struct {
     /// associated.  The completion key is set to 0; we use the OVERLAPPED
     /// pointer to identify operations instead.
     pub fn associate(self: *IocpPoll, handle: windows.HANDLE) !void {
-        _ = try windows.CreateIoCompletionPort(handle, self.iocp_handle, 0, 0);
+        const associated = kernel32.CreateIoCompletionPort(handle, self.iocp_handle, 0, 0);
+        if (associated == null) {
+            const err = windows.GetLastError();
+            switch (err) {
+                .INVALID_PARAMETER => return error.InvalidIocpAssociation,
+                else => return windows.unexpectedError(err),
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -483,6 +490,40 @@ fn initTestPoller() !IocpPoll {
     return IocpPoll.init(testing.allocator);
 }
 
+/// Open a temporary test file with FILE_FLAG_OVERLAPPED so it can be used
+/// with IOCP file I/O.
+fn openOverlappedTmpFile(tmp: *testing.TmpDir, name: []const u8, creation: std.os.windows.DWORD) !std.os.windows.HANDLE {
+    if (comptime builtin.os.tag != .windows) return error.SkipZigTest;
+    const windows = std.os.windows;
+    const kernel32 = windows.kernel32;
+
+    const rel_path = try std.fs.path.join(testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..], name });
+    defer testing.allocator.free(rel_path);
+
+    const cwd_path = try std.process.getCwdAlloc(testing.allocator);
+    defer testing.allocator.free(cwd_path);
+
+    const abs_path = try std.fs.path.join(testing.allocator, &.{ cwd_path, rel_path });
+    defer testing.allocator.free(abs_path);
+
+    const path_w = try std.unicode.wtf8ToWtf16LeAllocZ(testing.allocator, abs_path);
+    defer testing.allocator.free(path_w);
+
+    const handle = kernel32.CreateFileW(
+        path_w.ptr,
+        windows.GENERIC_READ | windows.GENERIC_WRITE,
+        windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE,
+        null,
+        creation,
+        windows.FILE_ATTRIBUTE_NORMAL | windows.FILE_FLAG_OVERLAPPED,
+        null,
+    );
+    if (handle == windows.INVALID_HANDLE_VALUE) {
+        return windows.unexpectedError(windows.GetLastError());
+    }
+    return handle;
+}
+
 // 1. Init / deinit — create IOCP, destroy it, no leaks.
 test "IocpPoll: init and deinit" {
     var p = try initTestPoller();
@@ -546,15 +587,18 @@ test "IocpPoll: file read" {
 
     const content = "hello iocp";
     const file = try tmp.dir.createFile("read_test", .{ .read = true, .truncate = true });
-    defer file.close();
     try file.writeAll(content);
+    file.close();
+
+    const read_handle = try openOverlappedTmpFile(&tmp, "read_test", std.os.windows.OPEN_EXISTING);
+    defer std.os.windows.CloseHandle(read_handle);
 
     // Associate the file handle with the IOCP.
-    try p.associate(file.handle);
+    try p.associate(read_handle);
 
     var buf: [64]u8 = undefined;
     const userdata = IocpPoll.encodeUserdata(.read, 0xAB);
-    try p.submitRead(file.handle, &buf, 0, userdata);
+    try p.submitRead(read_handle, &buf, 0, userdata);
 
     const completions = try p.poll(1000);
     try testing.expect(completions.len >= 1);
@@ -574,14 +618,14 @@ test "IocpPoll: file write then read" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const file = try tmp.dir.createFile("write_read_test", .{ .read = true, .truncate = true });
-    defer file.close();
+    const file_handle = try openOverlappedTmpFile(&tmp, "write_read_test", std.os.windows.CREATE_ALWAYS);
+    defer std.os.windows.CloseHandle(file_handle);
 
-    try p.associate(file.handle);
+    try p.associate(file_handle);
 
     const payload = "round-trip test data!";
     const write_ud = IocpPoll.encodeUserdata(.write, 1);
-    try p.submitWrite(file.handle, payload, 0, write_ud);
+    try p.submitWrite(file_handle, payload, 0, write_ud);
 
     const wc = try p.poll(1000);
     try testing.expect(wc.len >= 1);
@@ -591,7 +635,7 @@ test "IocpPoll: file write then read" {
     // Now read back.
     var buf: [64]u8 = undefined;
     const read_ud = IocpPoll.encodeUserdata(.read, 2);
-    try p.submitRead(file.handle, &buf, 0, read_ud);
+    try p.submitRead(file_handle, &buf, 0, read_ud);
 
     const rc = try p.poll(1000);
     try testing.expect(rc.len >= 1);
@@ -608,14 +652,17 @@ test "IocpPoll: userdata round-trip" {
     defer tmp.cleanup();
 
     const file = try tmp.dir.createFile("ud_test", .{ .read = true, .truncate = true });
-    defer file.close();
     try file.writeAll("x");
+    file.close();
 
-    try p.associate(file.handle);
+    const read_handle = try openOverlappedTmpFile(&tmp, "ud_test", std.os.windows.OPEN_EXISTING);
+    defer std.os.windows.CloseHandle(read_handle);
+
+    try p.associate(read_handle);
 
     const magic: u64 = 0xDEAD_BEEF_CAFE_0042;
     var buf: [8]u8 = undefined;
-    try p.submitRead(file.handle, &buf, 0, magic);
+    try p.submitRead(read_handle, &buf, 0, magic);
 
     const completions = try p.poll(1000);
     try testing.expect(completions.len >= 1);

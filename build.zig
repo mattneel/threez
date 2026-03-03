@@ -4,6 +4,8 @@ const zgpu_build = @import("zgpu");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const use_lld = target.result.os.tag == .windows;
+    const strip_for_windows: ?bool = if (target.result.os.tag == .windows) true else null;
 
     // --- quickjs-ng (vendored) ---
     const qjs_dep = b.dependency("zig-quickjs-ng", .{
@@ -18,6 +20,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = strip_for_windows,
     });
     lib_mod.addImport("quickjs", qjs_mod);
 
@@ -30,9 +33,10 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = strip_for_windows,
         }),
         .use_llvm = true,
-        .use_lld = false,
+        .use_lld = use_lld,
     });
 
     // --- Dependencies ---
@@ -67,7 +71,7 @@ pub fn build(b: *std.Build) void {
         .root_module = lib_mod,
         .linkage = .static,
         .use_llvm = true,
-        .use_lld = false,
+        .use_lld = use_lld,
     });
     lib.linkLibrary(qjs_lib);
     lib.linkLibrary(zglfw_dep.artifact("glfw"));
@@ -129,6 +133,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("examples/embed_api_check.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = strip_for_windows,
     });
     embed_check_mod.addImport("threez", lib_mod);
 
@@ -136,7 +141,7 @@ pub fn build(b: *std.Build) void {
         .name = "threez-embed-check",
         .root_module = embed_check_mod,
         .use_llvm = true,
-        .use_lld = false,
+        .use_lld = use_lld,
     });
     embed_check_exe.linkLibrary(qjs_lib);
     embed_check_exe.linkLibrary(zglfw_dep.artifact("glfw"));
@@ -167,6 +172,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/root.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = strip_for_windows,
             .imports = &.{
                 .{ .name = "quickjs", .module = qjs_mod },
                 .{ .name = "zgpu", .module = zgpu_mod },
@@ -176,7 +182,7 @@ pub fn build(b: *std.Build) void {
         // QuickJS Value is an extern struct; the default backend cannot
         // lower its return type yet (Zig compiler TODO), so use LLVM.
         .use_llvm = true,
-        .use_lld = false,
+        .use_lld = use_lld,
     });
     lib_unit_tests.linkLibrary(qjs_lib);
 
@@ -213,6 +219,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = strip_for_windows,
             .imports = &.{
                 .{ .name = "quickjs", .module = qjs_mod },
                 .{ .name = "zgpu", .module = zgpu_mod },
@@ -220,7 +227,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
         .use_llvm = true,
-        .use_lld = false,
+        .use_lld = use_lld,
     });
     exe_unit_tests.linkLibrary(qjs_lib);
 

@@ -156,8 +156,13 @@ fn runMain(allocator: std.mem.Allocator, iter: *std.process.ArgIterator) !void {
     };
     defer allocator.free(js_source);
 
+    // Keep a sentinel byte after the script contents. QuickJS receives an
+    // explicit length, but some parser paths are more stable with a trailing 0.
+    const js_source_z = try allocator.dupeZ(u8, js_source);
+    defer allocator.free(js_source_z);
+
     const script_dir = std.fs.path.dirname(js_path) orelse ".";
-    try runScript(allocator, js_source, .{
+    try runScript(allocator, js_source_z[0 .. js_source_z.len - 1], .{
         .width = win_width,
         .height = win_height,
         .title = win_title,
