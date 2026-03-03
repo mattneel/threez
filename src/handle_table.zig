@@ -46,9 +46,19 @@ pub const DawnHandle = union(HandleType) {
     query_set: void,
 };
 
-pub const HandleId = struct {
+pub const HandleId = packed struct(u48) {
     index: u32,
     generation: u16,
+
+    /// Pack into a u48 for JS number interop (fits losslessly in f64).
+    pub fn toNumber(self: HandleId) u48 {
+        return @bitCast(self);
+    }
+
+    /// Unpack from a u48 received from JS.
+    pub fn fromNumber(n: u48) HandleId {
+        return @bitCast(n);
+    }
 };
 
 pub const HandleEntry = struct {
@@ -400,4 +410,38 @@ test "zero capacity table returns OutOfHandles immediately" {
 
     try testing.expectEqual(@as(u32, 0), table.activeCount());
     try testing.expectError(HandleError.OutOfHandles, table.alloc(.{ .adapter = {} }));
+}
+
+// ---- HandleId pack/unpack tests --------------------------------------------
+
+// Pack a HandleId to u48, unpack back, verify fields match.
+test "HandleId pack/unpack round-trip" {
+    const id = HandleId{ .index = 42, .generation = 7 };
+    const n = id.toNumber();
+    const id2 = HandleId.fromNumber(n);
+
+    try testing.expectEqual(id.index, id2.index);
+    try testing.expectEqual(id.generation, id2.generation);
+}
+
+// Verify specific bit layout: index in low 32 bits, generation in high 16 bits.
+test "HandleId bit layout: index in low 32, generation in high 16" {
+    const id = HandleId{ .index = 0xDEADBEEF, .generation = 0xCAFE };
+    const n = id.toNumber();
+
+    // Low 32 bits should be the index.
+    try testing.expectEqual(@as(u32, 0xDEADBEEF), @as(u32, @truncate(n)));
+    // High 16 bits should be the generation.
+    try testing.expectEqual(@as(u16, 0xCAFE), @as(u16, @truncate(n >> 32)));
+}
+
+// Verify u48 fits in f64 without loss (integers up to 2^53 are exact in f64).
+test "HandleId u48 fits losslessly in f64" {
+    const id = HandleId{ .index = std.math.maxInt(u32), .generation = std.math.maxInt(u16) };
+    const n = id.toNumber();
+
+    // Cast u48 -> f64 -> u48 and verify no loss.
+    const as_f64: f64 = @floatFromInt(n);
+    const back: u48 = @intFromFloat(as_f64);
+    try testing.expectEqual(n, back);
 }
