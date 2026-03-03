@@ -80,6 +80,9 @@ pub const GpuBridge = struct {
     ///   - gpuRenderPassEnd(passId) → undefined
     ///   - gpuCommandEncoderFinish(encoderId) → command buffer handle ID
     ///   - gpuQueueSubmit(queueId, commandBuffers[]) → undefined
+    ///   - gpuConfigureContext(deviceId, format, alphaMode, width, height) → undefined
+    ///   - gpuGetCurrentTexture() → texture handle ID
+    ///   - gpuPresent() → undefined
     pub fn register(self: *const GpuBridge, ctx: *Context) !void {
         const global = ctx.getGlobalObject();
         defer global.deinit(ctx);
@@ -368,6 +371,38 @@ pub const GpuBridge = struct {
             &.{ht_ptr_num},
         );
         native_obj.setPropertyStr(ctx, "gpuQueueSubmit", queue_submit_fn) catch return error.JSError;
+
+        // --- T19: WebGPU present / swap chain functions ---
+
+        // gpuConfigureContext(deviceId, format, alphaMode, width, height) → undefined
+        const configure_ctx_fn = Value.initCFunctionData(
+            ctx,
+            &gpuConfigureContextNative,
+            5,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuConfigureContext", configure_ctx_fn) catch return error.JSError;
+
+        // gpuGetCurrentTexture() → texture handle ID
+        const get_current_tex_fn = Value.initCFunctionData(
+            ctx,
+            &gpuGetCurrentTextureNative,
+            0,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuGetCurrentTexture", get_current_tex_fn) catch return error.JSError;
+
+        // gpuPresent() → undefined
+        const present_fn = Value.initCFunctionData(
+            ctx,
+            &gpuPresentNative,
+            0,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuPresent", present_fn) catch return error.JSError;
     }
 };
 
@@ -1075,6 +1110,73 @@ fn gpuQueueSubmitNative(
         ht.free(cb_id) catch {};
     }
 
+    return Value.undefined;
+}
+
+// ---------------------------------------------------------------------------
+// T19: WebGPU present / swap chain native functions
+// ---------------------------------------------------------------------------
+
+/// __native.gpuConfigureContext(deviceId, format, alphaMode, width, height) → undefined
+///
+/// Stub — stores surface configuration. Real Dawn surface configuration comes later.
+/// Validates the device handle, accepts format/alphaMode strings and width/height.
+fn gpuConfigureContextNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    // argv[0] = deviceId — validate device handle exists
+    if (argv.len < 1) return Value.undefined;
+    const device_id_val: Value = @bitCast(argv[0]);
+    const device_f64 = device_id_val.toFloat64(context) catch return Value.undefined;
+    const device_id = f64ToHandle(device_f64);
+    _ = ht.get(device_id) catch return Value.undefined;
+
+    // argv[1] = format (string, e.g. "bgra8unorm"), accepted but not used yet
+    // argv[2] = alphaMode (string, e.g. "opaque"), accepted but not used yet
+    // argv[3] = width (number), accepted but not used yet
+    // argv[4] = height (number), accepted but not used yet
+    // All accepted for future Dawn surface configuration.
+
+    return Value.undefined;
+}
+
+/// __native.gpuGetCurrentTexture() → number (texture handle ID)
+///
+/// Stub — allocates a texture handle representing the swap chain back buffer.
+/// Real Dawn getCurrentTexture comes later.
+fn gpuGetCurrentTextureNative(
+    ctx: ?*Context,
+    _: Value,
+    _: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.@"null";
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.@"null";
+
+    // Allocate a texture handle for the swap chain back buffer
+    const id = ht.alloc(.{ .texture = {} }) catch return Value.@"null";
+    return Value.initFloat64(@floatFromInt(id.toNumber()));
+}
+
+/// __native.gpuPresent() → undefined
+///
+/// Stub — signals frame present. Real Dawn present comes later.
+fn gpuPresentNative(
+    _: ?*Context,
+    _: Value,
+    _: []const c.JSValue,
+    _: c_int,
+    _: [*c]c.JSValue,
+) Value {
+    // Stub — real Dawn surface present will be wired here later.
     return Value.undefined;
 }
 
@@ -2225,4 +2327,169 @@ test "gpuQueueSubmit frees multiple command buffers" {
     // All transient handles should be freed: 2 encoders + 2 command buffers
     // Only initial handles (adapter, device, queue) remain
     try testing.expectEqual(initial_count, ht.activeCount());
+}
+
+// ---------------------------------------------------------------------------
+// T19: WebGPU present / swap chain tests
+// ---------------------------------------------------------------------------
+
+test "register creates T19 swap chain functions on __native" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    var result = try engine.eval(
+        \\typeof __native.gpuConfigureContext === 'function' &&
+        \\typeof __native.gpuGetCurrentTexture === 'function' &&
+        \\typeof __native.gpuPresent === 'function'
+    , "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuConfigureContext is callable and returns undefined" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var result = __native.gpuConfigureContext(devId, 'bgra8unorm', 'opaque', 800, 600);
+        \\  return result === undefined;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuGetCurrentTexture returns a valid texture handle" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const initial_count = ht.activeCount();
+
+    var result = try engine.eval("__native.gpuGetCurrentTexture()", "<test>");
+    defer result.deinit();
+
+    // Should have allocated one more handle
+    try testing.expectEqual(initial_count + 1, ht.activeCount());
+
+    const returned_f64 = try result.toFloat64();
+    const returned_id = f64ToHandle(returned_f64);
+
+    try testing.expect(ht.isValid(returned_id));
+
+    const entry = try ht.get(returned_id);
+    try testing.expectEqual(handle_table.HandleType.texture, entry.handle_type);
+}
+
+test "gpuPresent is callable and returns undefined" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var result = __native.gpuPresent();
+        \\  return result === undefined;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "full frame cycle: configure → getCurrentTexture → createView → present" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const initial_count = ht.activeCount();
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var queueId = __native.gpuGetQueue(devId);
+        \\
+        \\  // 1. Configure the surface
+        \\  __native.gpuConfigureContext(devId, 'bgra8unorm', 'opaque', 800, 600);
+        \\
+        \\  // 2. Get the current swap chain texture
+        \\  var texId = __native.gpuGetCurrentTexture();
+        \\
+        \\  // 3. Create a view from the swap chain texture
+        \\  var viewId = __native.gpuCreateTextureView(texId, {});
+        \\
+        \\  // 4. Encode a render pass using the view
+        \\  var encoderId = __native.gpuCreateCommandEncoder(devId);
+        \\  var passId = __native.gpuCommandEncoderBeginRenderPass(encoderId, {
+        \\    colorAttachments: [{ view: viewId, loadOp: 'clear', storeOp: 'store' }]
+        \\  });
+        \\  __native.gpuRenderPassDraw(passId, 3);
+        \\  __native.gpuRenderPassEnd(passId);
+        \\  var cmdBuf = __native.gpuCommandEncoderFinish(encoderId);
+        \\  __native.gpuQueueSubmit(queueId, [cmdBuf]);
+        \\
+        \\  // 5. Present the frame
+        \\  __native.gpuPresent();
+        \\
+        \\  return texId;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    // The texture and texture view handles remain allocated (not freed by present)
+    // Transient handles (render pass, encoder, command buffer) are freed.
+    // So we have: initial + 1 (swap chain texture) + 1 (texture view) = initial + 2
+    try testing.expectEqual(initial_count + 2, ht.activeCount());
+
+    // Verify the returned texture handle is valid
+    const tex_f64 = try result.toFloat64();
+    const tex_id = f64ToHandle(tex_f64);
+    try testing.expect(ht.isValid(tex_id));
+
+    const entry = try ht.get(tex_id);
+    try testing.expectEqual(handle_table.HandleType.texture, entry.handle_type);
 }

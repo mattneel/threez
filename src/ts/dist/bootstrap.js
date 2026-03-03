@@ -213,6 +213,35 @@
       native?.gpuDestroyTexture?.(this._handle);
     }
   };
+  var GPUCanvasContext = class {
+    _configured = false;
+    _device = null;
+    _format = "bgra8unorm";
+    configure(config) {
+      this._device = config.device;
+      this._format = config.format ?? "bgra8unorm";
+      this._configured = true;
+      const native = getNative();
+      native?.gpuConfigureContext?.(config.device._handle, this._format, config.alphaMode ?? "opaque", 0, 0);
+    }
+    unconfigure() {
+      this._configured = false;
+      this._device = null;
+    }
+    getCurrentTexture() {
+      const native = getNative();
+      const handle = native?.gpuGetCurrentTexture?.() ?? 0;
+      return new GPUTexture(handle, this._device);
+    }
+    // Internal: called by event loop after queue.submit
+    present() {
+      const native = getNative();
+      native?.gpuPresent?.();
+    }
+    get configured() {
+      return this._configured;
+    }
+  };
   var GPUSampler = class {
     _handle;
     constructor(handle) {
@@ -436,18 +465,13 @@
     height = 600;
     style = {};
     _attributes = /* @__PURE__ */ new Map();
+    _gpuContext = null;
     getContext(contextId) {
       if (contextId === "webgpu") {
-        return {
-          configure(config) {
-          },
-          getCurrentTexture() {
-            return {};
-          },
-          getPreferredFormat() {
-            return "bgra8unorm";
-          }
-        };
+        if (!this._gpuContext) {
+          this._gpuContext = new GPUCanvasContext();
+        }
+        return this._gpuContext;
       }
       return null;
     }

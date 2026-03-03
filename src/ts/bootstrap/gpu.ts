@@ -80,6 +80,45 @@ export class GPUTexture {
 }
 
 // ---------------------------------------------------------------------------
+// GPUCanvasContext
+// ---------------------------------------------------------------------------
+
+export class GPUCanvasContext {
+  private _configured = false;
+  private _device: GPUDevice | null = null;
+  private _format: string = "bgra8unorm";
+
+  configure(config: { device: GPUDevice; format?: string; alphaMode?: string }): void {
+    this._device = config.device;
+    this._format = config.format ?? "bgra8unorm";
+    this._configured = true;
+    const native = getNative();
+    native?.gpuConfigureContext?.(config.device._handle, this._format, config.alphaMode ?? "opaque", 0, 0);
+  }
+
+  unconfigure(): void {
+    this._configured = false;
+    this._device = null;
+  }
+
+  getCurrentTexture(): GPUTexture {
+    const native = getNative();
+    const handle = native?.gpuGetCurrentTexture?.() as number ?? 0;
+    return new GPUTexture(handle, this._device!);
+  }
+
+  // Internal: called by event loop after queue.submit
+  present(): void {
+    const native = getNative();
+    native?.gpuPresent?.();
+  }
+
+  get configured(): boolean {
+    return this._configured;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // GPUSampler
 // ---------------------------------------------------------------------------
 

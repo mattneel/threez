@@ -7,7 +7,7 @@
 
 import { EventTarget } from "./event-target";
 import { getNative } from "./native";
-import { GPU } from "./gpu";
+import { GPU, GPUCanvasContext } from "./gpu";
 
 // ---------------------------------------------------------------------------
 // Canvas stub
@@ -18,22 +18,14 @@ export class CanvasStub extends EventTarget {
   height: number = 600;
   style: Record<string, string> = {};
   private _attributes: Map<string, string> = new Map();
+  private _gpuContext: GPUCanvasContext | null = null;
 
   getContext(contextId: string): any {
     if (contextId === "webgpu") {
-      // Return a stub GPU canvas context.
-      // The real implementation will be wired via __native later.
-      return {
-        configure(config: any) {
-          // stub
-        },
-        getCurrentTexture() {
-          return {}; // stub
-        },
-        getPreferredFormat() {
-          return "bgra8unorm";
-        },
-      };
+      if (!this._gpuContext) {
+        this._gpuContext = new GPUCanvasContext();
+      }
+      return this._gpuContext;
     }
     return null;
   }

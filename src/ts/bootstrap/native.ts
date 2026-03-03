@@ -102,6 +102,15 @@ export interface NativeBridge {
   gpuCommandEncoderFinish?(encoderId: number): number;
   /** Submit command buffers to a queue. */
   gpuQueueSubmit?(queueId: number, commandBuffers: number[]): void;
+
+  // --- T19: WebGPU present / swap chain ---
+
+  /** Configure the GPU canvas context surface. */
+  gpuConfigureContext?(deviceId: number, format: string, alphaMode: string, width: number, height: number): void;
+  /** Get the current swap chain texture, returning an opaque handle ID. */
+  gpuGetCurrentTexture?(): number;
+  /** Signal frame present after queue.submit. */
+  gpuPresent?(): void;
 }
 
 /**
