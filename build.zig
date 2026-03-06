@@ -184,7 +184,10 @@ pub fn build(b: *std.Build) void {
         aapt2_link.addFileArg(b.path("AndroidManifest.xml"));
         aapt2_link.addArgs(&.{ "--min-sdk-version", "26", "--target-sdk-version", "33" });
 
-        // Step 2: assemble APK (inject .so, zipalign, sign)
+        // Optional assets directory to bundle into the APK
+        const assets_dir = b.option([]const u8, "assets", "Directory of assets to bundle in APK");
+
+        // Step 2: assemble APK (inject .so, assets, zipalign, sign)
         const assemble = b.addSystemCommand(&.{"/bin/sh", "-c"});
         const so_path = exe.getEmittedBin();
         const apk_script = b.fmt(
@@ -194,6 +197,7 @@ pub fn build(b: *std.Build) void {
             \\mkdir -p "$WORK/lib/{s}"
             \\cp "$2" "$WORK/lib/{s}/libthreez.so"
             \\cd "$WORK" && zip -0 base.apk "lib/{s}/libthreez.so"
+            \\if [ -n "$5" -a -d "$5" ]; then mkdir -p "$WORK/assets" && cp -r "$5"/. "$WORK/assets/" && cd "$WORK" && find assets -type f -exec zip -0 base.apk {{}} \; ; fi
             \\"{s}/zipalign" -f 4 "$WORK/base.apk" "$WORK/aligned.apk"
             \\"{s}/apksigner" sign --ks "$3" --ks-pass pass:android --key-pass pass:android --out "$4" "$WORK/aligned.apk"
             \\rm -rf "$WORK"
@@ -205,6 +209,7 @@ pub fn build(b: *std.Build) void {
         assemble.addFileArg(so_path);
         assemble.addFileArg(b.path("debug.keystore"));
         const signed_apk = assemble.addOutputFileArg("threez.apk");
+        assemble.addArg(assets_dir orelse "");
         assemble.step.dependOn(&aapt2_link.step);
 
         const install_apk = b.addInstallFile(signed_apk, "threez.apk");

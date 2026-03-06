@@ -11,6 +11,7 @@ pub const c = @cImport({
     @cInclude("android_native_app_glue.h");
     @cInclude("android/native_window.h");
     @cInclude("android/input.h");
+    @cInclude("android/asset_manager.h");
     @cInclude("android/log.h");
 });
 
@@ -23,6 +24,7 @@ pub const AndroidApp = struct {
     gpu_window: ?AndroidWindow = null,
     runtime: ?*AndroidRuntime = null,
     event_bridge: ?*EventBridge = null,
+    asset_manager: ?*c.AAssetManager = null,
     allocator: std.mem.Allocator,
 
     pub const State = enum {
@@ -57,6 +59,7 @@ pub fn run(opaque_app: *anyopaque) void {
     if (native_app.activity != null) {
         const activity = native_app.activity;
         if (activity.*.assetManager != null) {
+            app.asset_manager = activity.*.assetManager;
             fetch.setAssetManager(@ptrCast(activity.*.assetManager));
             logInfo("AAssetManager registered");
         }
@@ -86,6 +89,17 @@ pub fn run(opaque_app: *anyopaque) void {
                 };
                 app.event_bridge = &app.runtime.?.event_bridge;
                 logInfo("JS runtime initialized");
+
+                // Load and evaluate user script from APK assets
+                if (loadAsset(allocator, app.asset_manager, "app.js")) |script| {
+                    defer allocator.free(script);
+                    app.runtime.?.evalScript(script, "app.js") catch |err| {
+                        logFmt("Script eval failed: {}", .{err});
+                    };
+                    logInfo("User script evaluated");
+                } else {
+                    logInfo("No app.js found in assets — running with bootstrap only");
+                }
 
                 app.state = .running;
             }
@@ -186,6 +200,24 @@ fn onAppCmd(native_app: ?*c.struct_android_app, cmd: i32) callconv(.c) void {
         c.APP_CMD_LOW_MEMORY => logInfo("LOW_MEMORY"),
         else => {},
     }
+}
+
+// -- Asset loading helper --
+
+fn loadAsset(allocator: std.mem.Allocator, mgr_opt: ?*c.AAssetManager, path: [*:0]const u8) ?[]u8 {
+    const mgr = mgr_opt orelse return null;
+    const asset = c.AAssetManager_open(mgr, path, c.AASSET_MODE_BUFFER) orelse return null;
+    defer c.AAsset_close(asset);
+    const len = c.AAsset_getLength(asset);
+    if (len <= 0) return null;
+    const ulen: usize = @intCast(len);
+    const buf = allocator.alloc(u8, ulen) catch return null;
+    const read = c.AAsset_read(asset, buf.ptr, ulen);
+    if (read != len) {
+        allocator.free(buf);
+        return null;
+    }
+    return buf;
 }
 
 // -- Clear-color render (T11 integration test) --
