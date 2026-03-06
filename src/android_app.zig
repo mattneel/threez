@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const AndroidWindow = @import("android_window.zig").AndroidWindow;
 
 pub const c = @cImport({
     @cInclude("android_native_app_glue.h");
@@ -13,6 +14,8 @@ pub const AndroidApp = struct {
     window_width: u32 = 0,
     window_height: u32 = 0,
     state: State = .created,
+    gpu_window: ?AndroidWindow = null,
+    allocator: std.mem.Allocator,
 
     pub const State = enum {
         created,
@@ -29,8 +32,13 @@ pub fn run(opaque_app: *anyopaque) void {
     const native_app: *c.struct_android_app = @ptrCast(@alignCast(opaque_app));
     logInfo("threez android_main started");
 
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
     var app = AndroidApp{
         .native_app = native_app,
+        .allocator = allocator,
     };
 
     native_app.onAppCmd = onAppCmd;
@@ -42,10 +50,23 @@ pub fn run(opaque_app: *anyopaque) void {
     while (app.state != .destroyed) {
         pollEvents(&app);
 
-        // TODO(T7+): Initialize Dawn surface when window becomes ready
+        // Initialize Dawn surface when window first becomes ready
+        if (app.state == .window_ready and app.gpu_window == null) {
+            if (app.window) |win| {
+                app.gpu_window = AndroidWindow.init(allocator, win, app.window_width, app.window_height) catch |err| {
+                    logFmt("GPU init failed: {}", .{err});
+                    app.state = .destroyed;
+                    continue;
+                };
+                app.state = .running;
+                logInfo("Dawn GPU surface created");
+            }
+        }
+
         // TODO(T11+): Render frame when in running state
     }
 
+    if (app.gpu_window) |*gw| gw.deinit();
     logInfo("threez android_main exiting");
 }
 
@@ -96,6 +117,10 @@ fn onAppCmd(native_app: ?*c.struct_android_app, cmd: i32) callconv(.c) void {
             logFmt("INIT_WINDOW: {}x{}", .{ app.window_width, app.window_height });
         },
         c.APP_CMD_TERM_WINDOW => {
+            if (app.gpu_window) |*gw| {
+                gw.deinit();
+                app.gpu_window = null;
+            }
             app.window = null;
             app.state = .window_lost;
             logInfo("TERM_WINDOW");
