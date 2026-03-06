@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const AndroidWindow = @import("android_window.zig").AndroidWindow;
+const fetch = @import("polyfills/fetch.zig");
 
 pub const c = @cImport({
     @cInclude("android_native_app_glue.h");
@@ -43,6 +44,15 @@ pub fn run(opaque_app: *anyopaque) void {
 
     native_app.onAppCmd = onAppCmd;
     native_app.userData = @ptrCast(&app);
+
+    // Expose the AAssetManager to the fetch polyfill for APK asset loading.
+    if (native_app.activity != null) {
+        const activity = native_app.activity;
+        if (activity.*.assetManager != null) {
+            fetch.setAssetManager(@ptrCast(activity.*.assetManager));
+            logInfo("AAssetManager registered");
+        }
+    }
 
     logInfo("Waiting for window...");
 

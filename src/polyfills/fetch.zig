@@ -1,8 +1,23 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const quickjs = @import("quickjs");
 const Value = quickjs.Value;
 const Context = quickjs.Context;
 const c = quickjs.c;
+
+const is_android = builtin.os.tag == .linux and builtin.abi == .android;
+const android_c = if (is_android) @cImport({
+    @cInclude("android/asset_manager.h");
+}) else struct {};
+
+/// Global AAssetManager pointer, set by android_app.zig at startup.
+var g_asset_manager: if (is_android) ?*android_c.AAssetManager else void = if (is_android) null else {};
+
+pub fn setAssetManager(mgr: *anyopaque) void {
+    if (is_android) {
+        g_asset_manager = @ptrCast(@alignCast(mgr));
+    }
+}
 
 /// Registers native helper functions for the fetch() polyfill on globalThis.
 ///
@@ -43,6 +58,14 @@ fn nativeReadFileSync(
     const str_result = arg.toCStringLen(ctx) orelse return Value.@"null";
     const path_slice = str_result.ptr[0..str_result.len];
     defer ctx.freeCString(str_result.ptr);
+
+    // On Android, try AAssetManager for relative paths (files bundled in APK).
+    if (is_android and !std.fs.path.isAbsolute(path_slice)) {
+        if (readFromAssetManager(path_slice)) |contents| {
+            defer std.heap.page_allocator.free(contents);
+            return Value.initUint8ArrayCopy(ctx, contents);
+        }
+    }
 
     // Open the file, returning null on failure (not found, etc.)
     const file = std.fs.cwd().openFile(path_slice, .{}) catch return Value.@"null";
@@ -155,6 +178,35 @@ fn httpFetchInner(ctx: *Context, url: []const u8) !Value {
     result.setPropertyStr(ctx, "body", Value.initUint8ArrayCopy(ctx, body)) catch return Value.@"null";
 
     return result;
+}
+
+fn readFromAssetManager(path: []const u8) ?[]u8 {
+    if (!is_android) return null;
+    const mgr = g_asset_manager orelse return null;
+
+    // AAssetManager_open needs a null-terminated string.
+    var path_buf: [1024]u8 = undefined;
+    if (path.len >= path_buf.len) return null;
+    @memcpy(path_buf[0..path.len], path);
+    path_buf[path.len] = 0;
+
+    const asset = android_c.AAssetManager_open(mgr, @ptrCast(path_buf[0..path.len :0]), android_c.AASSET_MODE_BUFFER) orelse return null;
+    defer android_c.AAsset_close(asset);
+
+    const len = android_c.AAsset_getLength(asset);
+    if (len < 0) return null;
+    const ulen: usize = @intCast(len);
+
+    const max_size = 64 * 1024 * 1024;
+    if (ulen > max_size) return null;
+
+    const buf = std.heap.page_allocator.alloc(u8, ulen) catch return null;
+    const read = android_c.AAsset_read(asset, buf.ptr, ulen);
+    if (read != len) {
+        std.heap.page_allocator.free(buf);
+        return null;
+    }
+    return buf;
 }
 
 // =============================================================================

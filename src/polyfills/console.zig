@@ -1,10 +1,15 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const quickjs = @import("quickjs");
 const Value = quickjs.Value;
 const Context = quickjs.Context;
 const c = quickjs.c;
 
+const is_android = builtin.os.tag == .linux and builtin.abi == .android;
+
 const log = std.log.scoped(.console);
+
+const android_log = if (is_android) @cImport(@cInclude("android/log.h")) else struct {};
 
 /// Registers a `console` object on globalThis with log, warn, error, and info methods.
 pub fn register(ctx: *Context) !void {
@@ -70,11 +75,28 @@ fn logArgs(comptime level: std.log.Level, ctx_opt: ?*Context, argv: []const c.JS
     }
 
     const msg = fbs.getWritten();
-    switch (level) {
-        .info => log.info("{s}", .{msg}),
-        .warn => log.warn("{s}", .{msg}),
-        .err => log.err("{s}", .{msg}),
-        .debug => log.debug("{s}", .{msg}),
+
+    if (is_android) {
+        // Null-terminate for __android_log_write
+        if (fbs.pos < buf.len) {
+            buf[fbs.pos] = 0;
+        } else {
+            buf[buf.len - 1] = 0;
+        }
+        const android_level: c_int = switch (level) {
+            .debug => android_log.ANDROID_LOG_DEBUG,
+            .info => android_log.ANDROID_LOG_INFO,
+            .warn => android_log.ANDROID_LOG_WARN,
+            .err => android_log.ANDROID_LOG_ERROR,
+        };
+        _ = android_log.__android_log_write(android_level, "threez.js", @ptrCast(buf[0..].ptr));
+    } else {
+        switch (level) {
+            .info => log.info("{s}", .{msg}),
+            .warn => log.warn("{s}", .{msg}),
+            .err => log.err("{s}", .{msg}),
+            .debug => log.debug("{s}", .{msg}),
+        }
     }
 }
 
