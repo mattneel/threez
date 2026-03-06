@@ -300,10 +300,37 @@ pub const EventBridge = struct {
     }
 
     // -------------------------------------------------------------------------
+    // Touch / pointer events (Android)
+    // -------------------------------------------------------------------------
+
+    /// Dispatch a touch/pointer event from Android AMotionEvent data.
+    /// Supports multi-touch via pointerId.
+    pub fn onTouch(
+        self: *EventBridge,
+        event_type: []const u8,
+        x: f64,
+        y: f64,
+        pointer_id: i32,
+        pointer_type: []const u8,
+        pressure: f64,
+    ) void {
+        const mx: f64 = if (self.has_last_pos and pointer_id == 0) x - self.last_x else 0;
+        const my: f64 = if (self.has_last_pos and pointer_id == 0) y - self.last_y else 0;
+        if (pointer_id == 0) {
+            self.last_x = x;
+            self.last_y = y;
+            self.has_last_pos = true;
+        }
+
+        self.dispatchPointerEventEx(event_type, x, y, mx, my, 0, pointer_id, pointer_type, pressure, self.js_canvas);
+        self.dispatchPointerEventEx(event_type, x, y, mx, my, 0, pointer_id, pointer_type, pressure, self.js_document);
+    }
+
+    // -------------------------------------------------------------------------
     // Internal dispatch helpers
     // -------------------------------------------------------------------------
 
-    /// Dispatch a PointerEvent on the given JS target.
+    /// Dispatch a PointerEvent on the given JS target (desktop mouse events).
     fn dispatchPointerEvent(
         self: *EventBridge,
         event_type: []const u8,
@@ -314,16 +341,31 @@ pub const EventBridge = struct {
         button: i32,
         target: Value,
     ) void {
+        self.dispatchPointerEventEx(event_type, client_x, client_y, movement_x, movement_y, button, 1, "mouse", 0.5, target);
+    }
+
+    /// Full PointerEvent dispatch with explicit pointerId, pointerType, and pressure.
+    fn dispatchPointerEventEx(
+        self: *EventBridge,
+        event_type: []const u8,
+        client_x: f64,
+        client_y: f64,
+        movement_x: f64,
+        movement_y: f64,
+        button: i32,
+        pointer_id: i32,
+        pointer_type: []const u8,
+        pressure: f64,
+        target: Value,
+    ) void {
         const ctx = self.ctx;
 
-        // Get the PointerEvent constructor from globalThis
         const global = ctx.getGlobalObject();
         defer global.deinit(ctx);
         const ctor = global.getPropertyStr(ctx, "PointerEvent");
         defer ctor.deinit(ctx);
         if (ctor.isUndefined()) return;
 
-        // Build the init object: { clientX, clientY, movementX, movementY, button, pointerType: "mouse" }
         const init_obj = Value.initObject(ctx);
         defer init_obj.deinit(ctx);
         init_obj.setPropertyStr(ctx, "clientX", Value.initFloat64(client_x)) catch return;
@@ -331,24 +373,22 @@ pub const EventBridge = struct {
         init_obj.setPropertyStr(ctx, "movementX", Value.initFloat64(movement_x)) catch return;
         init_obj.setPropertyStr(ctx, "movementY", Value.initFloat64(movement_y)) catch return;
         init_obj.setPropertyStr(ctx, "button", Value.initInt32(button)) catch return;
-        init_obj.setPropertyStr(ctx, "pointerId", Value.initInt32(1)) catch return;
-        init_obj.setPropertyStr(ctx, "pointerType", Value.initStringLen(ctx, "mouse")) catch return;
+        init_obj.setPropertyStr(ctx, "pointerId", Value.initInt32(pointer_id)) catch return;
+        init_obj.setPropertyStr(ctx, "pointerType", Value.initStringLen(ctx, pointer_type)) catch return;
+        init_obj.setPropertyStr(ctx, "pressure", Value.initFloat64(pressure)) catch return;
         init_obj.setPropertyStr(ctx, "bubbles", Value.initBool(true)) catch return;
         init_obj.setPropertyStr(ctx, "cancelable", Value.initBool(true)) catch return;
 
-        // new PointerEvent(type, init)
         const type_val = Value.initStringLen(ctx, event_type);
         defer type_val.deinit(ctx);
         const event_obj = ctor.callConstructor(ctx, &.{ type_val, init_obj });
         defer event_obj.deinit(ctx);
         if (event_obj.isException()) {
-            // Clear exception so it does not leak
             const exc = ctx.getException();
             exc.deinit(ctx);
             return;
         }
 
-        // target.dispatchEvent(event)
         self.callDispatchEvent(target, event_obj);
     }
 
