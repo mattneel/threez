@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const zgpu = @import("zgpu");
 const wgpu = zgpu.wgpu;
 const AndroidWindow = @import("android_window.zig").AndroidWindow;
+const AndroidRuntime = @import("android_runtime.zig").AndroidRuntime;
 const EventBridge = @import("event_bridge.zig").EventBridge;
 const fetch = @import("polyfills/fetch.zig");
 
@@ -20,6 +21,7 @@ pub const AndroidApp = struct {
     window_height: u32 = 0,
     state: State = .created,
     gpu_window: ?AndroidWindow = null,
+    runtime: ?*AndroidRuntime = null,
     event_bridge: ?*EventBridge = null,
     allocator: std.mem.Allocator,
 
@@ -66,7 +68,7 @@ pub fn run(opaque_app: *anyopaque) void {
     while (app.state != .destroyed) {
         pollEvents(&app);
 
-        // Initialize Dawn surface when window first becomes ready
+        // Initialize Dawn surface + JS runtime when window first becomes ready
         if (app.state == .window_ready and app.gpu_window == null) {
             if (app.window) |win| {
                 app.gpu_window = AndroidWindow.init(allocator, win, app.window_width, app.window_height) catch |err| {
@@ -74,19 +76,34 @@ pub fn run(opaque_app: *anyopaque) void {
                     app.state = .destroyed;
                     continue;
                 };
-                app.state = .running;
                 logInfo("Dawn GPU surface created");
+
+                // Initialize the JS runtime with the GPU context
+                app.runtime = AndroidRuntime.init(allocator, app.gpu_window.?.gctx, app.window_width, app.window_height) catch |err| {
+                    logFmt("Runtime init failed: {}", .{err});
+                    app.state = .destroyed;
+                    continue;
+                };
+                app.event_bridge = &app.runtime.?.event_bridge;
+                logInfo("JS runtime initialized");
+
+                app.state = .running;
             }
         }
 
-        // Render a frame when running (clear color proves the pipeline)
+        // Tick the JS event loop each frame
         if (app.state == .running) {
-            if (app.gpu_window) |*gw| {
-                renderClearColor(gw.gctx);
+            if (app.runtime) |rt| {
+                rt.tick();
             }
         }
     }
 
+    if (app.runtime) |rt| {
+        app.event_bridge = null;
+        rt.deinit();
+        app.runtime = null;
+    }
     if (app.gpu_window) |*gw| gw.deinit();
     logInfo("threez android_main exiting");
 }
@@ -138,6 +155,11 @@ fn onAppCmd(native_app: ?*c.struct_android_app, cmd: i32) callconv(.c) void {
             logFmt("INIT_WINDOW: {}x{}", .{ app.window_width, app.window_height });
         },
         c.APP_CMD_TERM_WINDOW => {
+            if (app.runtime) |rt| {
+                app.event_bridge = null;
+                rt.deinit();
+                app.runtime = null;
+            }
             if (app.gpu_window) |*gw| {
                 gw.deinit();
                 app.gpu_window = null;
