@@ -4,8 +4,9 @@ const Value = quickjs.Value;
 const Context = quickjs.Context;
 const c = quickjs.c;
 
-const zgpu = @import("zgpu");
-const wgpu = zgpu.wgpu;
+const dawn = @import("dawn/context.zig");
+const raw = @import("dawn/raw.zig");
+const wgpu = dawn.wgpu;
 
 const log = std.log.scoped(.gpu_bridge);
 
@@ -16,27 +17,31 @@ const DawnHandle = handle_table.DawnHandle;
 const descriptor = @import("descriptor.zig");
 
 /// The GPU bridge connects JavaScript WebGPU API calls to the pre-created
-/// zgpu/Dawn adapter, device, and queue.
+/// Dawn adapter, device, and queue.
 ///
-/// Since zgpu's GraphicsContext creates everything at init time, the bridge
+/// Since the native GraphicsContext creates everything at init time, the bridge
 /// simply wraps the existing GPU objects as handle IDs and returns them
 /// when JavaScript calls requestAdapter() / requestDevice() / getQueue().
 pub const GpuBridge = struct {
     handle_table_ptr: *HandleTable,
-    gctx: ?*zgpu.GraphicsContext,
+    gctx: ?*dawn.GraphicsContext,
     adapter_id: HandleId,
     device_id: HandleId,
     queue_id: HandleId,
     frame_texture_acquired: bool = false,
+    /// Track the JS handle for the current swapchain view so we can retire the
+    /// handle after present. GraphicsContext owns the actual Dawn view
+    /// lifetime.
+    prev_swapchain_view: ?HandleId = null,
 
     /// Initialize the bridge by allocating handle table entries for the
-    /// pre-existing adapter, device, and queue from the zgpu GraphicsContext.
+    /// pre-existing adapter, device, and queue from the native GraphicsContext.
     /// Stores real wgpu object pointers so native functions can forward
     /// GPU commands to Dawn.
     ///
     /// Pass null for gctx in test/stub mode — handle pointers will be null.
-    pub fn init(ht: *HandleTable, gctx: ?*zgpu.GraphicsContext) !GpuBridge {
-        const adapter_ptr: ?*anyopaque = if (gctx) |g| @ptrCast(g.device.getAdapter()) else null;
+    pub fn init(ht: *HandleTable, gctx: ?*dawn.GraphicsContext) !GpuBridge {
+        const adapter_ptr: ?*anyopaque = if (gctx) |g| @ptrCast(g.adapter) else null;
         const device_ptr: ?*anyopaque = if (gctx) |g| @ptrCast(g.device) else null;
         const queue_ptr: ?*anyopaque = if (gctx) |g| @ptrCast(g.queue) else null;
 
@@ -62,14 +67,21 @@ pub const GpuBridge = struct {
         if (self.frame_texture_acquired) {
             self.frame_texture_acquired = false;
             if (self.gctx) |gctx| {
-                log.debug("present: calling gctx.present()", .{});
                 _ = gctx.present();
+            }
+            if (self.prev_swapchain_view) |prev_id| {
+                self.handle_table_ptr.free(prev_id) catch {};
+                self.prev_swapchain_view = null;
             }
         }
     }
 
     /// Release the bridge's handle table entries.
     pub fn deinit(self: *GpuBridge) void {
+        if (self.prev_swapchain_view) |prev_id| {
+            self.handle_table_ptr.free(prev_id) catch {};
+            self.prev_swapchain_view = null;
+        }
         self.handle_table_ptr.free(self.queue_id) catch {};
         self.handle_table_ptr.free(self.device_id) catch {};
         self.handle_table_ptr.free(self.adapter_id) catch {};
@@ -81,13 +93,7 @@ pub const GpuBridge = struct {
     pub fn onFramebufferResize(self: *GpuBridge, width: u32, height: u32) void {
         const gctx = self.gctx orelse return;
         if (width == 0 or height == 0) return;
-        if (gctx.swapchain_descriptor.width == width and gctx.swapchain_descriptor.height == height) return;
-
-        gctx.swapchain_descriptor.width = width;
-        gctx.swapchain_descriptor.height = height;
-        gctx.swapchain.release();
-        gctx.swapchain = gctx.device.createSwapChain(gctx.surface, gctx.swapchain_descriptor);
-        log.info("swapchain resized to {}x{}", .{ width, height });
+        gctx.resize(width, height);
     }
 
     /// Register the GPU bridge native functions onto the __native object
@@ -513,6 +519,16 @@ pub const GpuBridge = struct {
         );
         native_obj.setPropertyStr(ctx, "gpuConfigureContext", configure_ctx_fn) catch return error.JSError;
 
+        // gpuGetPreferredCanvasFormat() → string
+        const preferred_canvas_format_fn = Value.initCFunctionData(
+            ctx,
+            &gpuGetPreferredCanvasFormatNative,
+            0,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuGetPreferredCanvasFormat", preferred_canvas_format_fn) catch return error.JSError;
+
         // gpuGetCurrentTexture() → texture handle ID
         const get_current_tex_fn = Value.initCFunctionData(
             ctx,
@@ -650,15 +666,13 @@ fn gpuCreateBufferNative(
     const desc = descriptor.translateDescriptor(BufferDescriptor, ctx, js_desc) catch return Value.@"null";
 
     // Create real wgpu buffer
-    log.debug("createBuffer: size={} usage={} mapped={}", .{ desc.size, desc.usage, desc.mappedAtCreation });
-    const wgpu_buffer = gctx.device.createBuffer(.{
-        .size = desc.size,
-        .usage = @bitCast(desc.usage),
-        .mapped_at_creation = if (desc.mappedAtCreation) .true else .false,
-    });
+    var raw_desc = std.mem.zeroes(raw.c.WGPUBufferDescriptor);
+    raw_desc.size = desc.size;
+    raw_desc.usage = @intCast(desc.usage);
+    raw_desc.mappedAtCreation = if (desc.mappedAtCreation) raw.c.WGPU_TRUE else raw.c.WGPU_FALSE;
+    const wgpu_buffer: wgpu.Buffer = @ptrCast(raw.c.wgpuDeviceCreateBuffer(@ptrCast(gctx.device), &raw_desc));
 
     const id = ht.alloc(.{ .buffer = @ptrCast(wgpu_buffer) }) catch return Value.@"null";
-    log.debug("createBuffer: SUCCESS id={}", .{id.toNumber()});
     return Value.initFloat64(@floatFromInt(id.toNumber()));
 }
 
@@ -712,32 +726,43 @@ fn gpuCreateTextureNative(
         }
     }
 
-    // Format may come as string (from Three.js) or number (from direct API use).
-    // The descriptor translator gives us 0 for strings, so try string parsing first.
-    const fmt: wgpu.TextureFormat = blk: {
-        if (desc.format != 0) break :blk @enumFromInt(desc.format);
-        // Fallback: try to read format as string directly from JS descriptor
-        const js_fmt_val = js_desc.getPropertyStr(ctx, "format");
-        defer js_fmt_val.deinit(ctx);
+    const js_fmt_val = js_desc.getPropertyStr(ctx, "format");
+    defer js_fmt_val.deinit(ctx);
+    const fmt: raw.c.WGPUTextureFormat = blk: {
         if (js_fmt_val.toCString(ctx)) |s| {
             defer ctx.freeCString(s);
             break :blk parseTextureFormat(std.mem.span(s));
         }
-        break :blk .bgra8_unorm;
+        if (!js_fmt_val.isUndefined() and !js_fmt_val.isNull()) {
+            const n: u32 = @intFromFloat(js_fmt_val.toFloat64(ctx) catch 0);
+            break :blk translateLegacyTextureFormatNumeric(n);
+        }
+        break :blk raw.c.WGPUTextureFormat_BGRA8Unorm;
     };
-    log.debug("createTexture: {}x{}x{} format={} usage={} mips={} samples={}", .{
-        desc.width, desc.height, desc.depthOrArrayLayers, @intFromEnum(fmt), desc.usage, desc.mipLevelCount, desc.sampleCount,
-    });
 
-    const wgpu_texture = gctx.device.createTexture(.{
-        .size = .{ .width = desc.width, .height = desc.height, .depth_or_array_layers = desc.depthOrArrayLayers },
-        .mip_level_count = desc.mipLevelCount,
-        .sample_count = desc.sampleCount,
-        .format = fmt,
-        .usage = @bitCast(desc.usage),
-    });
-
-    log.debug("createTexture: SUCCESS texture={*}", .{@as(*anyopaque, @ptrCast(wgpu_texture))});
+    const js_dim_val = js_desc.getPropertyStr(ctx, "dimension");
+    defer js_dim_val.deinit(ctx);
+    const dimension: raw.c.WGPUTextureDimension = blk: {
+        if (js_dim_val.toCString(ctx)) |s| {
+            defer ctx.freeCString(s);
+            const str = std.mem.span(s);
+            if (std.mem.eql(u8, str, "1d")) break :blk raw.c.WGPUTextureDimension_1D;
+            if (std.mem.eql(u8, str, "3d")) break :blk raw.c.WGPUTextureDimension_3D;
+        }
+        break :blk raw.c.WGPUTextureDimension_2D;
+    };
+    var raw_desc = std.mem.zeroes(raw.c.WGPUTextureDescriptor);
+    raw_desc.usage = @intCast(desc.usage);
+    raw_desc.dimension = dimension;
+    raw_desc.size = .{
+        .width = desc.width,
+        .height = desc.height,
+        .depthOrArrayLayers = desc.depthOrArrayLayers,
+    };
+    raw_desc.format = fmt;
+    raw_desc.mipLevelCount = desc.mipLevelCount;
+    raw_desc.sampleCount = desc.sampleCount;
+    const wgpu_texture: wgpu.Texture = @ptrCast(raw.c.wgpuDeviceCreateTexture(@ptrCast(gctx.device), &raw_desc));
 
     // Capture first rgba16float texture as intermediate render target for debug readback
     const id = ht.alloc(.{ .texture = @ptrCast(wgpu_texture) }) catch return Value.@"null";
@@ -764,18 +789,24 @@ fn gpuCreateTextureViewNative(
     const tex_id = f64ToHandle(tex_f64);
     const tex_entry = ht.get(tex_id) catch return Value.@"null";
 
-    // If texture stores a TextureView directly (swapchain case), wrap it
+    // If texture stores a TextureView directly (swapchain case), return same handle.
+    // No new allocation — the view is managed by getCurrentTexture's lifecycle.
     if (tex_entry.handle_type == .texture_view) {
-        log.debug("createTextureView: swapchain passthrough view={?}", .{tex_entry.handle.texture_view});
-        const id = ht.alloc(.{ .texture_view = tex_entry.handle.texture_view }) catch return Value.@"null";
-        return Value.initFloat64(@floatFromInt(id.toNumber()));
+        return Value.initFloat64(tex_f64);
     }
 
     const wgpu_texture: ?wgpu.Texture = tex_entry.handle.as(wgpu.Texture);
     const texture = wgpu_texture orelse return Value.@"null";
 
     // Parse the optional descriptor from JS
-    var view_desc = wgpu.TextureViewDescriptor{};
+    var raw_view_desc = std.mem.zeroes(raw.c.WGPUTextureViewDescriptor);
+    raw_view_desc.format = raw.c.WGPUTextureFormat_Undefined;
+    raw_view_desc.dimension = raw.c.WGPUTextureViewDimension_Undefined;
+    raw_view_desc.baseMipLevel = 0;
+    raw_view_desc.mipLevelCount = 0xffff_ffff;
+    raw_view_desc.baseArrayLayer = 0;
+    raw_view_desc.arrayLayerCount = 0xffff_ffff;
+    raw_view_desc.aspect = raw.c.WGPUTextureAspect_All;
 
     if (args.len >= 2) {
         const desc_val: Value = @bitCast(args[1]);
@@ -786,7 +817,10 @@ fn gpuCreateTextureViewNative(
             if (!fmt_val.isUndefined() and !fmt_val.isNull()) {
                 if (fmt_val.toCString(ctx)) |s| {
                     defer ctx.freeCString(s);
-                    view_desc.format = parseTextureFormat(std.mem.span(s));
+                    raw_view_desc.format = parseTextureFormat(std.mem.span(s));
+                } else {
+                    const n: u32 = @intFromFloat(fmt_val.toFloat64(ctx) catch 0);
+                    raw_view_desc.format = translateLegacyTextureFormatNumeric(n);
                 }
             }
 
@@ -796,33 +830,33 @@ fn gpuCreateTextureViewNative(
             if (dim_val.toCString(ctx)) |s| {
                 defer ctx.freeCString(s);
                 const str = std.mem.span(s);
-                if (std.mem.eql(u8, str, "1d")) view_desc.dimension = .tvdim_1d
-                else if (std.mem.eql(u8, str, "2d")) view_desc.dimension = .tvdim_2d
-                else if (std.mem.eql(u8, str, "2d-array")) view_desc.dimension = .tvdim_2d_array
-                else if (std.mem.eql(u8, str, "cube")) view_desc.dimension = .tvdim_cube
-                else if (std.mem.eql(u8, str, "cube-array")) view_desc.dimension = .tvdim_cube_array
-                else if (std.mem.eql(u8, str, "3d")) view_desc.dimension = .tvdim_3d;
+                if (std.mem.eql(u8, str, "1d")) raw_view_desc.dimension = raw.c.WGPUTextureViewDimension_1D
+                else if (std.mem.eql(u8, str, "2d")) raw_view_desc.dimension = raw.c.WGPUTextureViewDimension_2D
+                else if (std.mem.eql(u8, str, "2d-array")) raw_view_desc.dimension = raw.c.WGPUTextureViewDimension_2DArray
+                else if (std.mem.eql(u8, str, "cube")) raw_view_desc.dimension = raw.c.WGPUTextureViewDimension_Cube
+                else if (std.mem.eql(u8, str, "cube-array")) raw_view_desc.dimension = raw.c.WGPUTextureViewDimension_CubeArray
+                else if (std.mem.eql(u8, str, "3d")) raw_view_desc.dimension = raw.c.WGPUTextureViewDimension_3D;
             }
 
             // baseMipLevel
             const bml_val = desc_val.getPropertyStr(ctx, "baseMipLevel");
             defer bml_val.deinit(ctx);
-            if (!bml_val.isUndefined()) view_desc.base_mip_level = @intFromFloat(bml_val.toFloat64(ctx) catch 0);
+            if (!bml_val.isUndefined()) raw_view_desc.baseMipLevel = @intFromFloat(bml_val.toFloat64(ctx) catch 0);
 
             // mipLevelCount
             const mlc_val = desc_val.getPropertyStr(ctx, "mipLevelCount");
             defer mlc_val.deinit(ctx);
-            if (!mlc_val.isUndefined()) view_desc.mip_level_count = @intFromFloat(mlc_val.toFloat64(ctx) catch 0xffff_ffff);
+            if (!mlc_val.isUndefined()) raw_view_desc.mipLevelCount = @intFromFloat(mlc_val.toFloat64(ctx) catch 0xffff_ffff);
 
             // baseArrayLayer
             const bal_val = desc_val.getPropertyStr(ctx, "baseArrayLayer");
             defer bal_val.deinit(ctx);
-            if (!bal_val.isUndefined()) view_desc.base_array_layer = @intFromFloat(bal_val.toFloat64(ctx) catch 0);
+            if (!bal_val.isUndefined()) raw_view_desc.baseArrayLayer = @intFromFloat(bal_val.toFloat64(ctx) catch 0);
 
             // arrayLayerCount
             const alc_val = desc_val.getPropertyStr(ctx, "arrayLayerCount");
             defer alc_val.deinit(ctx);
-            if (!alc_val.isUndefined()) view_desc.array_layer_count = @intFromFloat(alc_val.toFloat64(ctx) catch 0xffff_ffff);
+            if (!alc_val.isUndefined()) raw_view_desc.arrayLayerCount = @intFromFloat(alc_val.toFloat64(ctx) catch 0xffff_ffff);
 
             // aspect
             const asp_val = desc_val.getPropertyStr(ctx, "aspect");
@@ -830,22 +864,14 @@ fn gpuCreateTextureViewNative(
             if (asp_val.toCString(ctx)) |s| {
                 defer ctx.freeCString(s);
                 const str = std.mem.span(s);
-                if (std.mem.eql(u8, str, "stencil-only")) view_desc.aspect = .stencil_only
-                else if (std.mem.eql(u8, str, "depth-only")) view_desc.aspect = .depth_only;
+                if (std.mem.eql(u8, str, "stencil-only")) raw_view_desc.aspect = raw.c.WGPUTextureAspect_StencilOnly
+                else if (std.mem.eql(u8, str, "depth-only")) raw_view_desc.aspect = raw.c.WGPUTextureAspect_DepthOnly;
             }
         }
     }
 
-    const view = texture.createView(view_desc);
+    const view: wgpu.TextureView = @ptrCast(raw.c.wgpuTextureCreateView(@ptrCast(texture), &raw_view_desc));
 
-    log.debug("createTextureView: created view={*} from texture={*} baseMip={} mipCount={} baseLayer={} layerCount={}", .{
-        @as(*anyopaque, @ptrCast(view)),
-        @as(*anyopaque, @ptrCast(texture)),
-        view_desc.base_mip_level,
-        view_desc.mip_level_count,
-        view_desc.base_array_layer,
-        view_desc.array_layer_count,
-    });
     const id = ht.alloc(.{ .texture_view = @ptrCast(view) }) catch return Value.@"null";
     return Value.initFloat64(@floatFromInt(id.toNumber()));
 }
@@ -863,28 +889,82 @@ fn gpuCreateSamplerNative(
     const ht = bridge.handle_table_ptr;
     const gctx = bridge.gctx orelse return Value.@"null";
 
-    var sampler_desc: wgpu.SamplerDescriptor = .{};
+    var sampler_desc = std.mem.zeroes(raw.c.WGPUSamplerDescriptor);
 
     if (args.len >= 2) {
         const js_desc: Value = @bitCast(args[1]);
         if (!js_desc.isUndefined() and !js_desc.isNull()) {
             const desc = descriptor.translateDescriptor(SamplerDescriptor, ctx, js_desc) catch return Value.@"null";
-            sampler_desc.mag_filter = @enumFromInt(desc.magFilter);
-            sampler_desc.min_filter = @enumFromInt(desc.minFilter);
-            sampler_desc.mipmap_filter = @enumFromInt(desc.mipmapFilter);
-            sampler_desc.address_mode_u = @enumFromInt(desc.addressModeU);
-            sampler_desc.address_mode_v = @enumFromInt(desc.addressModeV);
-            sampler_desc.address_mode_w = @enumFromInt(desc.addressModeW);
-            sampler_desc.lod_min_clamp = desc.lodMinClamp;
-            sampler_desc.lod_max_clamp = desc.lodMaxClamp;
-            sampler_desc.max_anisotropy = @intCast(@max(desc.maxAnisotropy, 1));
-            if (desc.compare != 0) {
-                sampler_desc.compare = @enumFromInt(desc.compare);
+            sampler_desc.lodMinClamp = desc.lodMinClamp;
+            sampler_desc.lodMaxClamp = desc.lodMaxClamp;
+            sampler_desc.maxAnisotropy = @intCast(@max(desc.maxAnisotropy, 1));
+
+            const mag_val = js_desc.getPropertyStr(ctx, "magFilter");
+            defer mag_val.deinit(ctx);
+            sampler_desc.magFilter = if (mag_val.toCString(ctx)) |s| blk: {
+                defer ctx.freeCString(s);
+                if (std.mem.eql(u8, std.mem.span(s), "linear")) break :blk raw.c.WGPUFilterMode_Linear;
+                break :blk raw.c.WGPUFilterMode_Nearest;
+            } else raw.c.WGPUFilterMode_Nearest;
+
+            const min_val = js_desc.getPropertyStr(ctx, "minFilter");
+            defer min_val.deinit(ctx);
+            sampler_desc.minFilter = if (min_val.toCString(ctx)) |s| blk: {
+                defer ctx.freeCString(s);
+                if (std.mem.eql(u8, std.mem.span(s), "linear")) break :blk raw.c.WGPUFilterMode_Linear;
+                break :blk raw.c.WGPUFilterMode_Nearest;
+            } else raw.c.WGPUFilterMode_Nearest;
+
+            const mip_val = js_desc.getPropertyStr(ctx, "mipmapFilter");
+            defer mip_val.deinit(ctx);
+            sampler_desc.mipmapFilter = if (mip_val.toCString(ctx)) |s| blk: {
+                defer ctx.freeCString(s);
+                if (std.mem.eql(u8, std.mem.span(s), "linear")) break :blk raw.c.WGPUMipmapFilterMode_Linear;
+                break :blk raw.c.WGPUMipmapFilterMode_Nearest;
+            } else raw.c.WGPUMipmapFilterMode_Nearest;
+
+            const address_mode_props = [_][2]u8{
+                .{ 'U', 0 },
+                .{ 'V', 0 },
+                .{ 'W', 0 },
+            };
+            inline for (address_mode_props) |suffix| {
+                const prop = switch (suffix[0]) {
+                    'U' => "addressModeU",
+                    'V' => "addressModeV",
+                    else => "addressModeW",
+                };
+                const mode_val = js_desc.getPropertyStr(ctx, prop);
+                defer mode_val.deinit(ctx);
+                const mode = if (mode_val.toCString(ctx)) |s| blk: {
+                    defer ctx.freeCString(s);
+                    const str = std.mem.span(s);
+                    if (std.mem.eql(u8, str, "repeat")) break :blk raw.c.WGPUAddressMode_Repeat;
+                    if (std.mem.eql(u8, str, "mirror-repeat")) break :blk raw.c.WGPUAddressMode_MirrorRepeat;
+                    break :blk raw.c.WGPUAddressMode_ClampToEdge;
+                } else raw.c.WGPUAddressMode_ClampToEdge;
+                switch (suffix[0]) {
+                    'U' => sampler_desc.addressModeU = @intCast(mode),
+                    'V' => sampler_desc.addressModeV = @intCast(mode),
+                    else => sampler_desc.addressModeW = @intCast(mode),
+                }
+            }
+
+            const compare_val = js_desc.getPropertyStr(ctx, "compare");
+            defer compare_val.deinit(ctx);
+            if (!compare_val.isUndefined() and !compare_val.isNull()) {
+                if (compare_val.toCString(ctx)) |s| {
+                    defer ctx.freeCString(s);
+                    sampler_desc.compare = parseCompareFunction(std.mem.span(s));
+                } else {
+                    const n: u32 = @intFromFloat(compare_val.toFloat64(ctx) catch 0);
+                    sampler_desc.compare = translateLegacyCompareFunctionNumeric(n);
+                }
             }
         }
     }
 
-    const sampler = gctx.device.createSampler(sampler_desc);
+    const sampler: wgpu.Sampler = @ptrCast(raw.c.wgpuDeviceCreateSampler(@ptrCast(gctx.device), &sampler_desc));
 
     const id = ht.alloc(.{ .sampler = @ptrCast(sampler) }) catch return Value.@"null";
     return Value.initFloat64(@floatFromInt(id.toNumber()));
@@ -1043,6 +1123,14 @@ fn gpuDestroyTextureNative(
 // Pipeline creation native functions
 // ---------------------------------------------------------------------------
 
+const android_wgpu_shim = struct {
+    extern fn threezCreateShaderModuleShim(
+        device: wgpu.Device,
+        label: ?[*:0]const u8,
+        code: [*:0]const u8,
+    ) wgpu.ShaderModule;
+};
+
 /// __native.gpuCreateShaderModule(deviceId, descriptor) → number (handle ID)
 ///
 /// Compiles WGSL shader code via Dawn and stores the resulting ShaderModule.
@@ -1069,20 +1157,24 @@ fn gpuCreateShaderModuleNative(
     defer context.freeCString(code_ptr);
 
     const code_span = std.mem.span(code_ptr);
-    log.debug("createShaderModule: code_len={}", .{code_span.len});
 
-    // Build the chained WGSL descriptor
-    var wgsl_desc = wgpu.ShaderModuleWGSLDescriptor{
-        .chain = .{ .next = null, .struct_type = .shader_module_wgsl_descriptor },
-        .code = code_ptr,
-    };
+    const label_val = desc_val.getPropertyStr(context, "label");
+    defer label_val.deinit(context);
+    const label_ptr = label_val.toCString(context);
+    defer if (label_ptr) |ptr| context.freeCString(ptr);
 
-    const shader_module = gctx.device.createShaderModule(.{
-        .next_in_chain = @ptrCast(&wgsl_desc),
-    });
+    var wgsl_desc = std.mem.zeroes(raw.c.WGPUShaderSourceWGSL);
+    wgsl_desc.chain.next = null;
+    wgsl_desc.chain.sType = raw.c.WGPUSType_ShaderSourceWGSL;
+    wgsl_desc.code = rawStringViewSlice(code_span);
+
+    var shader_desc = std.mem.zeroes(raw.c.WGPUShaderModuleDescriptor);
+    shader_desc.nextInChain = &wgsl_desc.chain;
+    shader_desc.label = rawStringViewZ(label_ptr);
+
+    const shader_module: wgpu.ShaderModule = @ptrCast(raw.c.wgpuDeviceCreateShaderModule(@ptrCast(gctx.device), &shader_desc));
 
     const id = ht.alloc(.{ .shader_module = @ptrCast(shader_module) }) catch return Value.@"null";
-    log.debug("createShaderModule: SUCCESS id={}", .{id.toNumber()});
     return Value.initFloat64(@floatFromInt(id.toNumber()));
 }
 
@@ -1107,7 +1199,7 @@ fn gpuCreateBindGroupLayoutNative(
     const entries_val = desc_val.getPropertyStr(context, "entries");
     defer entries_val.deinit(context);
 
-    var entries: [16]wgpu.BindGroupLayoutEntry = undefined;
+    var entries: [16]raw.c.WGPUBindGroupLayoutEntry = undefined;
     var entry_count: usize = 0;
 
     if (!entries_val.isUndefined() and !entries_val.isNull()) {
@@ -1128,59 +1220,67 @@ fn gpuCreateBindGroupLayoutNative(
             defer vis_val.deinit(context);
             const visibility: u32 = @intFromFloat(vis_val.toFloat64(context) catch 0);
 
-            var entry = wgpu.BindGroupLayoutEntry{
-                .binding = binding,
-                .visibility = @bitCast(visibility),
-            };
+            var entry = std.mem.zeroes(raw.c.WGPUBindGroupLayoutEntry);
+            entry.binding = binding;
+            entry.visibility = @intCast(visibility);
 
             // Parse buffer binding
             const buf_val = elem.getPropertyStr(context, "buffer");
             defer buf_val.deinit(context);
             if (!buf_val.isUndefined() and !buf_val.isNull()) {
-                var buf_type: wgpu.BufferBindingType = .uniform;
+                var buf_type: @TypeOf(entry.buffer.type) = raw.c.WGPUBufferBindingType_Uniform;
                 const type_val = buf_val.getPropertyStr(context, "type");
                 defer type_val.deinit(context);
                 if (type_val.toCString(context)) |s| {
                     defer context.freeCString(s);
                     const str = std.mem.span(s);
-                    if (std.mem.eql(u8, str, "storage")) buf_type = .storage
-                    else if (std.mem.eql(u8, str, "read-only-storage")) buf_type = .read_only_storage;
+                    if (std.mem.eql(u8, str, "storage")) buf_type = @intCast(raw.c.WGPUBufferBindingType_Storage)
+                    else if (std.mem.eql(u8, str, "read-only-storage")) buf_type = @intCast(raw.c.WGPUBufferBindingType_ReadOnlyStorage);
+                } else if (!type_val.isUndefined() and !type_val.isNull()) {
+                    const n: u32 = @intFromFloat(type_val.toFloat64(context) catch 0);
+                    buf_type = @intCast(translateLegacyBufferBindingTypeNumeric(n));
                 }
-                entry.buffer = .{ .binding_type = buf_type };
+                entry.buffer.type = buf_type;
             }
 
             // Parse sampler binding
             const samp_val = elem.getPropertyStr(context, "sampler");
             defer samp_val.deinit(context);
             if (!samp_val.isUndefined() and !samp_val.isNull()) {
-                var samp_type: wgpu.SamplerBindingType = .filtering;
+                var samp_type: @TypeOf(entry.sampler.type) = raw.c.WGPUSamplerBindingType_Filtering;
                 const type_val = samp_val.getPropertyStr(context, "type");
                 defer type_val.deinit(context);
                 if (type_val.toCString(context)) |s| {
                     defer context.freeCString(s);
                     const str = std.mem.span(s);
-                    if (std.mem.eql(u8, str, "non-filtering")) samp_type = .non_filtering
-                    else if (std.mem.eql(u8, str, "comparison")) samp_type = .comparison;
+                    if (std.mem.eql(u8, str, "non-filtering")) samp_type = @intCast(raw.c.WGPUSamplerBindingType_NonFiltering)
+                    else if (std.mem.eql(u8, str, "comparison")) samp_type = @intCast(raw.c.WGPUSamplerBindingType_Comparison);
+                } else if (!type_val.isUndefined() and !type_val.isNull()) {
+                    const n: u32 = @intFromFloat(type_val.toFloat64(context) catch 0);
+                    samp_type = @intCast(translateLegacySamplerBindingTypeNumeric(n));
                 }
-                entry.sampler = .{ .binding_type = samp_type };
+                entry.sampler.type = samp_type;
             }
 
             // Parse texture binding
             const tex_val = elem.getPropertyStr(context, "texture");
             defer tex_val.deinit(context);
             if (!tex_val.isUndefined() and !tex_val.isNull()) {
-                var sample_type: wgpu.TextureSampleType = .float;
+                var sample_type: @TypeOf(entry.texture.sampleType) = raw.c.WGPUTextureSampleType_Float;
                 const st_val = tex_val.getPropertyStr(context, "sampleType");
                 defer st_val.deinit(context);
                 if (st_val.toCString(context)) |s| {
                     defer context.freeCString(s);
                     const str = std.mem.span(s);
-                    if (std.mem.eql(u8, str, "unfilterable-float")) sample_type = .unfilterable_float
-                    else if (std.mem.eql(u8, str, "depth")) sample_type = .depth
-                    else if (std.mem.eql(u8, str, "sint")) sample_type = .sint
-                    else if (std.mem.eql(u8, str, "uint")) sample_type = .uint;
+                    if (std.mem.eql(u8, str, "unfilterable-float")) sample_type = @intCast(raw.c.WGPUTextureSampleType_UnfilterableFloat)
+                    else if (std.mem.eql(u8, str, "depth")) sample_type = @intCast(raw.c.WGPUTextureSampleType_Depth)
+                    else if (std.mem.eql(u8, str, "sint")) sample_type = @intCast(raw.c.WGPUTextureSampleType_Sint)
+                    else if (std.mem.eql(u8, str, "uint")) sample_type = @intCast(raw.c.WGPUTextureSampleType_Uint);
+                } else if (!st_val.isUndefined() and !st_val.isNull()) {
+                    const n: u32 = @intFromFloat(st_val.toFloat64(context) catch 0);
+                    sample_type = @intCast(translateLegacyTextureSampleTypeNumeric(n));
                 }
-                entry.texture = .{ .sample_type = sample_type };
+                entry.texture.sampleType = sample_type;
             }
 
             // Parse storageTexture binding
@@ -1195,22 +1295,20 @@ fn gpuCreateBindGroupLayoutNative(
                         break :blk parseTextureFormat(std.mem.span(s));
                     }
                     const n: u32 = @intFromFloat(fmt_val.toFloat64(context) catch 0);
-                    break :blk @as(wgpu.TextureFormat, @enumFromInt(n));
+                    break :blk translateLegacyTextureFormatNumeric(n);
                 };
-                entry.storage_texture = .{
-                    .access = .write_only,
-                    .format = st_fmt,
-                };
+                entry.storageTexture.access = raw.c.WGPUStorageTextureAccess_WriteOnly;
+                entry.storageTexture.format = st_fmt;
             }
 
             entries[i] = entry;
         }
     }
 
-    const layout = gctx.device.createBindGroupLayout(.{
-        .entry_count = entry_count,
-        .entries = if (entry_count > 0) @ptrCast(&entries) else null,
-    });
+    var layout_desc = std.mem.zeroes(raw.c.WGPUBindGroupLayoutDescriptor);
+    layout_desc.entryCount = entry_count;
+    layout_desc.entries = if (entry_count > 0) @ptrCast(&entries) else null;
+    const layout: wgpu.BindGroupLayout = @ptrCast(raw.c.wgpuDeviceCreateBindGroupLayout(@ptrCast(gctx.device), &layout_desc));
 
     const id = ht.alloc(.{ .bind_group_layout = @ptrCast(layout) }) catch return Value.@"null";
     return Value.initFloat64(@floatFromInt(id.toNumber()));
@@ -1237,7 +1335,7 @@ fn gpuCreatePipelineLayoutNative(
     const bgl_arr = desc_val.getPropertyStr(context, "bindGroupLayouts");
     defer bgl_arr.deinit(context);
 
-    var layouts: [8]wgpu.BindGroupLayout = undefined;
+    var layouts: [8]raw.c.WGPUBindGroupLayout = undefined;
     var layout_count: usize = 0;
 
     if (!bgl_arr.isUndefined() and !bgl_arr.isNull()) {
@@ -1252,14 +1350,15 @@ fn gpuCreatePipelineLayoutNative(
             const bgl_f64 = elem.toFloat64(context) catch return Value.@"null";
             const bgl_id = f64ToHandle(bgl_f64);
             const bgl_entry = ht.get(bgl_id) catch return Value.@"null";
-            layouts[i] = bgl_entry.handle.as(wgpu.BindGroupLayout) orelse return Value.@"null";
+            const layout = bgl_entry.handle.as(wgpu.BindGroupLayout) orelse return Value.@"null";
+            layouts[i] = @ptrCast(layout);
         }
     }
 
-    const pipeline_layout = gctx.device.createPipelineLayout(.{
-        .bind_group_layout_count = layout_count,
-        .bind_group_layouts = if (layout_count > 0) @ptrCast(&layouts) else null,
-    });
+    var pipeline_layout_desc = std.mem.zeroes(raw.c.WGPUPipelineLayoutDescriptor);
+    pipeline_layout_desc.bindGroupLayoutCount = layout_count;
+    pipeline_layout_desc.bindGroupLayouts = if (layout_count > 0) @ptrCast(&layouts) else null;
+    const pipeline_layout: wgpu.PipelineLayout = @ptrCast(raw.c.wgpuDeviceCreatePipelineLayout(@ptrCast(gctx.device), &pipeline_layout_desc));
 
     const id = ht.alloc(.{ .pipeline_layout = @ptrCast(pipeline_layout) }) catch return Value.@"null";
     return Value.initFloat64(@floatFromInt(id.toNumber()));
@@ -1323,9 +1422,9 @@ fn gpuCreateRenderPipelineNative(
     const vertex_ep: ?[*:0]const u8 = vertex_ep_owned;
 
     // vertex.buffers (array of VertexBufferLayout)
-    var vbuf_layouts: [8]wgpu.VertexBufferLayout = undefined;
+    var vbuf_layouts: [8]raw.c.WGPUVertexBufferLayout = undefined;
     var vbuf_count: usize = 0;
-    var all_attrs: [64]wgpu.VertexAttribute = undefined;
+    var all_attrs: [64]raw.c.WGPUVertexAttribute = undefined;
     var attr_offset: usize = 0;
 
     const vbufs_val = vert_val.getPropertyStr(context, "buffers");
@@ -1341,12 +1440,11 @@ fn gpuCreateRenderPipelineNative(
 
             // Check for null/undefined buffer slot (Three.js can pass null)
             if (vb.isUndefined() or vb.isNull()) {
-                vbuf_layouts[bi] = .{
-                    .array_stride = 0,
-                    .step_mode = .vertex,
-                    .attribute_count = 0,
-                    .attributes = @ptrCast(&all_attrs[attr_offset]),
-                };
+                vbuf_layouts[bi] = std.mem.zeroes(raw.c.WGPUVertexBufferLayout);
+                vbuf_layouts[bi].stepMode = raw.c.WGPUVertexStepMode_Vertex;
+                vbuf_layouts[bi].arrayStride = 0;
+                vbuf_layouts[bi].attributeCount = 0;
+                vbuf_layouts[bi].attributes = null;
                 continue;
             }
 
@@ -1354,12 +1452,12 @@ fn gpuCreateRenderPipelineNative(
             defer stride_val.deinit(context);
             const array_stride: u64 = @intFromFloat(stride_val.toFloat64(context) catch 0);
 
-            var step_mode: wgpu.VertexStepMode = .vertex;
+            var step_mode = raw.c.WGPUVertexStepMode_Vertex;
             const sm_val = vb.getPropertyStr(context, "stepMode");
             defer sm_val.deinit(context);
             if (sm_val.toCString(context)) |s| {
                 defer context.freeCString(s);
-                if (std.mem.eql(u8, std.mem.span(s), "instance")) step_mode = .instance;
+                if (std.mem.eql(u8, std.mem.span(s), "instance")) step_mode = raw.c.WGPUVertexStepMode_Instance;
             }
 
             // Parse attributes
@@ -1379,13 +1477,13 @@ fn gpuCreateRenderPipelineNative(
 
                     const fmt_val = attr.getPropertyStr(context, "format");
                     defer fmt_val.deinit(context);
-                    const vert_fmt = blk: {
+                    const vert_fmt: raw.c.WGPUVertexFormat = blk: {
                         if (fmt_val.toCString(context)) |s| {
                             defer context.freeCString(s);
                             break :blk parseVertexFormat(std.mem.span(s));
                         }
                         const n: u32 = @intFromFloat(fmt_val.toFloat64(context) catch 0);
-                        break :blk @as(wgpu.VertexFormat, @enumFromInt(n));
+                        break :blk translateLegacyVertexFormatNumeric(n);
                     };
 
                     const off_val = attr.getPropertyStr(context, "offset");
@@ -1396,35 +1494,32 @@ fn gpuCreateRenderPipelineNative(
                     defer loc_val.deinit(context);
                     const location: u32 = @intFromFloat(loc_val.toFloat64(context) catch 0);
 
-                    all_attrs[attr_offset] = .{
-                        .format = vert_fmt,
-                        .offset = offset,
-                        .shader_location = location,
-                    };
+                    all_attrs[attr_offset] = std.mem.zeroes(raw.c.WGPUVertexAttribute);
+                    all_attrs[attr_offset].format = vert_fmt;
+                    all_attrs[attr_offset].offset = offset;
+                    all_attrs[attr_offset].shaderLocation = location;
                     attr_offset += 1;
                 }
             }
 
-            vbuf_layouts[bi] = .{
-                .array_stride = array_stride,
-                .step_mode = step_mode,
-                .attribute_count = attr_offset - attr_start,
-                .attributes = @ptrCast(&all_attrs[attr_start]),
-            };
+            vbuf_layouts[bi] = std.mem.zeroes(raw.c.WGPUVertexBufferLayout);
+            vbuf_layouts[bi].arrayStride = array_stride;
+            vbuf_layouts[bi].stepMode = @intCast(step_mode);
+            vbuf_layouts[bi].attributeCount = attr_offset - attr_start;
+            vbuf_layouts[bi].attributes = if (attr_offset > attr_start) @ptrCast(&all_attrs[attr_start]) else null;
         }
     }
 
-    const vertex_state = wgpu.VertexState{
-        .module = vertex_module,
-        .entry_point = vertex_ep orelse "main",
-        .buffer_count = vbuf_count,
-        .buffers = if (vbuf_count > 0) @ptrCast(&vbuf_layouts) else null,
-    };
+    var vertex_state = std.mem.zeroes(raw.c.WGPUVertexState);
+    vertex_state.module = @ptrCast(vertex_module);
+    vertex_state.entryPoint = if (vertex_ep) |ep| rawStringViewZ(ep) else rawStringViewSlice("main");
+    vertex_state.bufferCount = vbuf_count;
+    vertex_state.buffers = if (vbuf_count > 0) @ptrCast(&vbuf_layouts) else null;
 
     // --- fragment state (optional) ---
-    var fragment_state: wgpu.FragmentState = undefined;
-    var color_targets: [8]wgpu.ColorTargetState = undefined;
-    var blend_states: [8]wgpu.BlendState = undefined;
+    var fragment_state = std.mem.zeroes(raw.c.WGPUFragmentState);
+    var color_targets: [8]raw.c.WGPUColorTargetState = undefined;
+    var blend_states: [8]raw.c.WGPUBlendState = undefined;
     var has_fragment = false;
 
     const frag_val = desc_val.getPropertyStr(context, "fragment");
@@ -1459,19 +1554,19 @@ fn gpuCreateRenderPipelineNative(
 
                 const fmt_val2 = tgt.getPropertyStr(context, "format");
                 defer fmt_val2.deinit(context);
-                const target_fmt = blk: {
+                const target_fmt: raw.c.WGPUTextureFormat = blk: {
                     if (fmt_val2.toCString(context)) |s| {
                         defer context.freeCString(s);
                         break :blk parseTextureFormat(std.mem.span(s));
                     }
                     const n: u32 = @intFromFloat(fmt_val2.toFloat64(context) catch 0);
-                    break :blk @as(wgpu.TextureFormat, @enumFromInt(n));
+                    break :blk translateLegacyTextureFormatNumeric(n);
                 };
 
                 // Parse blend (optional)
                 const blend_val = tgt.getPropertyStr(context, "blend");
                 defer blend_val.deinit(context);
-                var blend_ptr: ?*const wgpu.BlendState = null;
+                var blend_ptr: ?*const raw.c.WGPUBlendState = null;
                 if (!blend_val.isUndefined() and !blend_val.isNull()) {
                     blend_states[ti] = .{
                         .color = parseBlendComponent(context, blend_val, "color"),
@@ -1481,32 +1576,32 @@ fn gpuCreateRenderPipelineNative(
                 }
 
                 // Parse writeMask (optional, default all)
-                var write_mask: wgpu.ColorWriteMask = wgpu.ColorWriteMask.all;
+                var write_mask: u32 = 0xF;
                 const wm_val = tgt.getPropertyStr(context, "writeMask");
                 defer wm_val.deinit(context);
                 if (!wm_val.isUndefined()) {
-                    const wm: u32 = @intFromFloat(wm_val.toFloat64(context) catch 0xF);
-                    write_mask = @bitCast(wm);
+                    write_mask = @intFromFloat(wm_val.toFloat64(context) catch 0xF);
                 }
 
-                color_targets[ti] = .{
-                    .format = target_fmt,
-                    .blend = blend_ptr,
-                    .write_mask = write_mask,
-                };
+                color_targets[ti] = std.mem.zeroes(raw.c.WGPUColorTargetState);
+                color_targets[ti].format = target_fmt;
+                color_targets[ti].blend = blend_ptr;
+                color_targets[ti].writeMask = @intCast(write_mask);
             }
         }
 
-        fragment_state = .{
-            .module = frag_module,
-            .entry_point = frag_ep orelse "main",
-            .target_count = target_count,
-            .targets = if (target_count > 0) @ptrCast(&color_targets) else null,
-        };
+        fragment_state.module = @ptrCast(frag_module);
+        fragment_state.entryPoint = if (frag_ep) |ep| rawStringViewZ(ep) else rawStringViewSlice("main");
+        fragment_state.targetCount = target_count;
+        fragment_state.targets = if (target_count > 0) @ptrCast(&color_targets) else null;
     }
 
     // --- primitive state ---
-    var primitive = wgpu.PrimitiveState{};
+    var raw_primitive = std.mem.zeroes(raw.c.WGPUPrimitiveState);
+    raw_primitive.topology = raw.c.WGPUPrimitiveTopology_TriangleList;
+    raw_primitive.stripIndexFormat = raw.c.WGPUIndexFormat_Undefined;
+    raw_primitive.frontFace = raw.c.WGPUFrontFace_CCW;
+    raw_primitive.cullMode = raw.c.WGPUCullMode_None;
     const prim_val = desc_val.getPropertyStr(context, "primitive");
     defer prim_val.deinit(context);
     if (!prim_val.isUndefined() and !prim_val.isNull()) {
@@ -1515,11 +1610,11 @@ fn gpuCreateRenderPipelineNative(
         if (topo_val.toCString(context)) |s| {
             defer context.freeCString(s);
             const str = std.mem.span(s);
-            if (std.mem.eql(u8, str, "point-list")) primitive.topology = .point_list
-            else if (std.mem.eql(u8, str, "line-list")) primitive.topology = .line_list
-            else if (std.mem.eql(u8, str, "line-strip")) primitive.topology = .line_strip
-            else if (std.mem.eql(u8, str, "triangle-list")) primitive.topology = .triangle_list
-            else if (std.mem.eql(u8, str, "triangle-strip")) primitive.topology = .triangle_strip;
+            if (std.mem.eql(u8, str, "point-list")) raw_primitive.topology = raw.c.WGPUPrimitiveTopology_PointList
+            else if (std.mem.eql(u8, str, "line-list")) raw_primitive.topology = raw.c.WGPUPrimitiveTopology_LineList
+            else if (std.mem.eql(u8, str, "line-strip")) raw_primitive.topology = raw.c.WGPUPrimitiveTopology_LineStrip
+            else if (std.mem.eql(u8, str, "triangle-list")) raw_primitive.topology = raw.c.WGPUPrimitiveTopology_TriangleList
+            else if (std.mem.eql(u8, str, "triangle-strip")) raw_primitive.topology = raw.c.WGPUPrimitiveTopology_TriangleStrip;
         }
 
         const cull_val = prim_val.getPropertyStr(context, "cullMode");
@@ -1527,8 +1622,8 @@ fn gpuCreateRenderPipelineNative(
         if (cull_val.toCString(context)) |s| {
             defer context.freeCString(s);
             const str = std.mem.span(s);
-            if (std.mem.eql(u8, str, "front")) primitive.cull_mode = .front
-            else if (std.mem.eql(u8, str, "back")) primitive.cull_mode = .back;
+            if (std.mem.eql(u8, str, "front")) raw_primitive.cullMode = raw.c.WGPUCullMode_Front
+            else if (std.mem.eql(u8, str, "back")) raw_primitive.cullMode = raw.c.WGPUCullMode_Back;
         }
 
         const ff_val = prim_val.getPropertyStr(context, "frontFace");
@@ -1536,24 +1631,32 @@ fn gpuCreateRenderPipelineNative(
         if (ff_val.toCString(context)) |s| {
             defer context.freeCString(s);
             const span = std.mem.span(s);
-            if (std.mem.eql(u8, span, "cw")) primitive.front_face = .cw
-            else if (std.mem.eql(u8, span, "ccw")) primitive.front_face = .ccw;
+            if (std.mem.eql(u8, span, "cw")) raw_primitive.frontFace = raw.c.WGPUFrontFace_CW
+            else if (std.mem.eql(u8, span, "ccw")) raw_primitive.frontFace = raw.c.WGPUFrontFace_CCW;
         }
 
         // stripIndexFormat must only be set for strip topologies
-        if (primitive.topology == .line_strip or primitive.topology == .triangle_strip) {
+        if (raw_primitive.topology == raw.c.WGPUPrimitiveTopology_LineStrip or raw_primitive.topology == raw.c.WGPUPrimitiveTopology_TriangleStrip) {
             const sif_val = prim_val.getPropertyStr(context, "stripIndexFormat");
             defer sif_val.deinit(context);
             if (sif_val.toCString(context)) |s| {
                 defer context.freeCString(s);
-                if (std.mem.eql(u8, std.mem.span(s), "uint16")) primitive.strip_index_format = .uint16
-                else primitive.strip_index_format = .uint32;
+                if (std.mem.eql(u8, std.mem.span(s), "uint16")) raw_primitive.stripIndexFormat = raw.c.WGPUIndexFormat_Uint16
+                else raw_primitive.stripIndexFormat = raw.c.WGPUIndexFormat_Uint32;
             }
         }
     }
 
     // --- depth/stencil state (optional) ---
-    var depth_stencil: wgpu.DepthStencilState = undefined;
+    var raw_depth_stencil = std.mem.zeroes(raw.c.WGPUDepthStencilState);
+    raw_depth_stencil.depthCompare = raw.c.WGPUCompareFunction_Always;
+    raw_depth_stencil.stencilFront = .{
+        .compare = raw.c.WGPUCompareFunction_Always,
+        .failOp = raw.c.WGPUStencilOperation_Keep,
+        .depthFailOp = raw.c.WGPUStencilOperation_Keep,
+        .passOp = raw.c.WGPUStencilOperation_Keep,
+    };
+    raw_depth_stencil.stencilBack = raw_depth_stencil.stencilFront;
     var has_depth_stencil = false;
     const ds_val = desc_val.getPropertyStr(context, "depthStencil");
     defer ds_val.deinit(context);
@@ -1562,32 +1665,30 @@ fn gpuCreateRenderPipelineNative(
 
         const fmt_val3 = ds_val.getPropertyStr(context, "format");
         defer fmt_val3.deinit(context);
-        const ds_format = blk: {
+        raw_depth_stencil.format = blk: {
             if (fmt_val3.toCString(context)) |s| {
                 defer context.freeCString(s);
                 break :blk parseTextureFormat(std.mem.span(s));
             }
             const n: u32 = @intFromFloat(fmt_val3.toFloat64(context) catch 0);
-            break :blk @as(wgpu.TextureFormat, @enumFromInt(n));
+            break :blk translateLegacyTextureFormatNumeric(n);
         };
 
         const dwe_val = ds_val.getPropertyStr(context, "depthWriteEnabled");
         defer dwe_val.deinit(context);
-        const depth_write = if (!dwe_val.isUndefined()) (dwe_val.toBool(context) catch false) else false;
+        if (!dwe_val.isUndefined()) {
+            raw_depth_stencil.depthWriteEnabled = if (dwe_val.toBool(context) catch false)
+                raw.c.WGPUOptionalBool_True
+            else
+                raw.c.WGPUOptionalBool_False;
+        }
 
-        var depth_compare: wgpu.CompareFunction = .always;
         const dc_val = ds_val.getPropertyStr(context, "depthCompare");
         defer dc_val.deinit(context);
         if (dc_val.toCString(context)) |s| {
             defer context.freeCString(s);
-            depth_compare = parseCompareFunction(std.mem.span(s));
+            raw_depth_stencil.depthCompare = parseCompareFunction(std.mem.span(s));
         }
-
-        depth_stencil = .{
-            .format = ds_format,
-            .depth_write_enabled = depth_write,
-            .depth_compare = depth_compare,
-        };
     }
 
     // --- multisample state ---
@@ -1608,25 +1709,20 @@ fn gpuCreateRenderPipelineNative(
         if (!atc_val.isUndefined()) multisample.alpha_to_coverage_enabled = atc_val.toBool(context) catch false;
     }
 
-    // --- Create the pipeline ---
-    log.debug("createRenderPipeline: layout={}, has_fragment={}, has_depth={}, vbuf_count={}, entry_point={?s}", .{
-        @intFromPtr(@as(?*anyopaque, if (pipeline_layout) |l| @ptrCast(l) else null)),
-        has_fragment,
-        has_depth_stencil,
-        vbuf_count,
-        vertex_ep,
-    });
+    var raw_multisample = std.mem.zeroes(raw.c.WGPUMultisampleState);
+    raw_multisample.count = multisample.count;
+    raw_multisample.mask = multisample.mask;
+    raw_multisample.alphaToCoverageEnabled = if (multisample.alpha_to_coverage_enabled) raw.c.WGPU_TRUE else raw.c.WGPU_FALSE;
 
-    const render_pipeline = gctx.device.createRenderPipeline(.{
-        .layout = pipeline_layout,
-        .vertex = vertex_state,
-        .primitive = primitive,
-        .depth_stencil = if (has_depth_stencil) &depth_stencil else null,
-        .multisample = multisample,
-        .fragment = if (has_fragment) &fragment_state else null,
-    });
+    var pipeline_desc = std.mem.zeroes(raw.c.WGPURenderPipelineDescriptor);
+    pipeline_desc.layout = if (pipeline_layout) |l| @ptrCast(l) else null;
+    pipeline_desc.vertex = vertex_state;
+    pipeline_desc.primitive = raw_primitive;
+    pipeline_desc.depthStencil = if (has_depth_stencil) &raw_depth_stencil else null;
+    pipeline_desc.multisample = raw_multisample;
+    pipeline_desc.fragment = if (has_fragment) &fragment_state else null;
 
-    log.debug("createRenderPipeline: SUCCESS pipeline={*}", .{@as(*anyopaque, @ptrCast(render_pipeline))});
+    const render_pipeline: wgpu.RenderPipeline = @ptrCast(raw.c.wgpuDeviceCreateRenderPipeline(@ptrCast(gctx.device), &pipeline_desc));
 
     const id = ht.alloc(.{ .render_pipeline = @ptrCast(render_pipeline) }) catch return Value.@"null";
     return Value.initFloat64(@floatFromInt(id.toNumber()));
@@ -1674,7 +1770,7 @@ fn gpuCreateBindGroupNative(
     const entries_val = desc_val.getPropertyStr(context, "entries");
     defer entries_val.deinit(context);
 
-    var entries: [16]wgpu.BindGroupEntry = undefined;
+    var entries: [16]raw.c.WGPUBindGroupEntry = undefined;
     var entry_count: usize = 0;
 
     if (!entries_val.isUndefined() and !entries_val.isNull()) {
@@ -1691,10 +1787,9 @@ fn gpuCreateBindGroupNative(
             defer binding_val.deinit(context);
             const binding: u32 = @intFromFloat(binding_val.toFloat64(context) catch 0);
 
-            var entry = wgpu.BindGroupEntry{
-                .binding = binding,
-                .size = std.math.maxInt(u64),
-            };
+            var entry = std.mem.zeroes(raw.c.WGPUBindGroupEntry);
+            entry.binding = binding;
+            entry.size = std.math.maxInt(u64);
 
             // resource can be a buffer, sampler, or textureView
             const resource_val = elem.getPropertyStr(context, "resource");
@@ -1710,7 +1805,7 @@ fn gpuCreateBindGroupNative(
                     const buf_f64 = buf_val.toFloat64(context) catch 0;
                     const buf_id = f64ToHandle(buf_f64);
                     if (ht.get(buf_id)) |buf_entry| {
-                        entry.buffer = buf_entry.handle.as(wgpu.Buffer);
+                        if (buf_entry.handle.as(wgpu.Buffer)) |buffer| entry.buffer = @ptrCast(buffer);
                     } else |_| {}
 
                     const off_val = resource_val.getPropertyStr(context, "offset");
@@ -1727,10 +1822,10 @@ fn gpuCreateBindGroupNative(
                         if (ht.get(res_id)) |res_entry| {
                             switch (res_entry.handle_type) {
                                 .sampler => {
-                                    entry.sampler = res_entry.handle.as(wgpu.Sampler);
+                                    if (res_entry.handle.as(wgpu.Sampler)) |sampler| entry.sampler = @ptrCast(sampler);
                                 },
                                 .texture_view => {
-                                    entry.texture_view = res_entry.handle.as(wgpu.TextureView);
+                                    if (res_entry.handle.as(wgpu.TextureView)) |view| entry.textureView = @ptrCast(view);
                                 },
                                 else => {},
                             }
@@ -1743,11 +1838,11 @@ fn gpuCreateBindGroupNative(
         }
     }
 
-    const bind_group = gctx.device.createBindGroup(.{
-        .layout = layout,
-        .entry_count = entry_count,
-        .entries = if (entry_count > 0) @ptrCast(&entries) else null,
-    });
+    var bind_group_desc = std.mem.zeroes(raw.c.WGPUBindGroupDescriptor);
+    bind_group_desc.layout = @ptrCast(layout);
+    bind_group_desc.entryCount = entry_count;
+    bind_group_desc.entries = if (entry_count > 0) @ptrCast(&entries) else null;
+    const bind_group: wgpu.BindGroup = @ptrCast(raw.c.wgpuDeviceCreateBindGroup(@ptrCast(gctx.device), &bind_group_desc));
 
     const id = ht.alloc(.{ .bind_group = @ptrCast(bind_group) }) catch return Value.@"null";
     return Value.initFloat64(@floatFromInt(id.toNumber()));
@@ -1796,7 +1891,6 @@ fn gpuCreateCommandEncoderNative(
     if (argv.len < 1) return Value.@"null";
 
     const encoder = gctx.device.createCommandEncoder(null);
-    log.debug("createCommandEncoder: encoder={*}", .{@as(*anyopaque, @ptrCast(encoder))});
 
     const id = ht.alloc(.{ .command_encoder = @ptrCast(encoder) }) catch return Value.@"null";
     return Value.initFloat64(@floatFromInt(id.toNumber()));
@@ -1830,7 +1924,7 @@ fn gpuCommandEncoderBeginRenderPassNative(
     const desc_val: Value = @bitCast(argv[1]);
 
     // Parse colorAttachments array
-    var color_attachments: [8]wgpu.RenderPassColorAttachment = undefined;
+    var color_attachments: [8]raw.c.WGPURenderPassColorAttachment = undefined;
     var color_count: usize = 0;
 
     const ca_val = desc_val.getPropertyStr(context, "colorAttachments");
@@ -1850,39 +1944,33 @@ fn gpuCommandEncoderBeginRenderPassNative(
             defer view_val.deinit(context);
             const view_f64 = view_val.toFloat64(context) catch 0;
             const view_id = f64ToHandle(view_f64);
-            log.debug("beginRenderPass: color[{}] view_f64={d} id.index={} id.gen={} type={}", .{
-                i, view_f64, view_id.index, view_id.generation, @intFromBool(view_val.isNull()),
-            });
             const view_entry = ht.get(view_id) catch |e| {
                 log.err("beginRenderPass: color[{}] handle lookup failed: {}", .{ i, e });
                 return Value.@"null";
             };
-            log.debug("beginRenderPass: color[{}] entry.type={}, entry.alive={}", .{
-                i, @intFromEnum(view_entry.handle_type), view_entry.alive,
-            });
             const view: wgpu.TextureView = view_entry.handle.as(wgpu.TextureView) orelse return Value.@"null";
 
             // Parse loadOp / storeOp
             const load_val = elem.getPropertyStr(context, "loadOp");
             defer load_val.deinit(context);
-            var load_op: wgpu.LoadOp = .load;
+            var load_op = raw.c.WGPULoadOp_Load;
             if (load_val.toCString(context)) |s| {
                 defer context.freeCString(s);
                 const load_str = std.mem.span(s);
-                if (std.mem.eql(u8, load_str, "clear")) load_op = .clear;
+                if (std.mem.eql(u8, load_str, "clear")) load_op = raw.c.WGPULoadOp_Clear;
             }
 
             const store_val = elem.getPropertyStr(context, "storeOp");
             defer store_val.deinit(context);
-            var store_op: wgpu.StoreOp = .store;
+            var store_op = raw.c.WGPUStoreOp_Store;
             if (store_val.toCString(context)) |s| {
                 defer context.freeCString(s);
                 const store_str = std.mem.span(s);
-                if (std.mem.eql(u8, store_str, "discard")) store_op = .discard;
+                if (std.mem.eql(u8, store_str, "discard")) store_op = raw.c.WGPUStoreOp_Discard;
             }
 
             // Parse clearValue
-            var clear_color = wgpu.Color{ .r = 0, .g = 0, .b = 0, .a = 1 };
+            var clear_color = raw.c.WGPUColor{ .r = 0, .g = 0, .b = 0, .a = 1 };
             const cv_val = elem.getPropertyStr(context, "clearValue");
             defer cv_val.deinit(context);
             if (!cv_val.isUndefined() and !cv_val.isNull()) {
@@ -1915,24 +2003,19 @@ fn gpuCommandEncoderBeginRenderPassNative(
                 } else |_| {}
             }
 
-            if (resolve_target != null) {
-                log.debug("beginRenderPass: color[{}] resolveTarget={*}", .{
-                    i, @as(*anyopaque, @ptrCast(resolve_target.?)),
-                });
-            }
-
             color_attachments[i] = .{
-                .view = view,
-                .resolve_target = resolve_target,
-                .load_op = load_op,
-                .store_op = store_op,
-                .clear_value = clear_color,
+                .view = @ptrCast(view),
+                .depthSlice = raw.c.WGPU_DEPTH_SLICE_UNDEFINED,
+                .resolveTarget = if (resolve_target) |rt| @ptrCast(rt) else null,
+                .loadOp = @intCast(load_op),
+                .storeOp = @intCast(store_op),
+                .clearValue = clear_color,
             };
         }
     }
 
     // Parse depthStencilAttachment (optional)
-    var depth_stencil: wgpu.RenderPassDepthStencilAttachment = undefined;
+    var depth_stencil = std.mem.zeroes(raw.c.WGPURenderPassDepthStencilAttachment);
     var has_depth: bool = false;
     const ds_val = desc_val.getPropertyStr(context, "depthStencilAttachment");
     defer ds_val.deinit(context);
@@ -1942,79 +2025,44 @@ fn gpuCommandEncoderBeginRenderPassNative(
         defer ds_view_val.deinit(context);
         const ds_view_f64 = ds_view_val.toFloat64(context) catch 0;
         const ds_view_id = f64ToHandle(ds_view_f64);
-        log.debug("beginRenderPass: depth view_f64={d} id.index={} id.gen={}", .{
-            ds_view_f64, ds_view_id.index, ds_view_id.generation,
-        });
         const ds_entry = ht.get(ds_view_id) catch |e| {
             log.err("beginRenderPass: depth handle lookup failed: {}", .{e});
             return Value.@"null";
         };
-        log.debug("beginRenderPass: depth entry.type={}, entry.alive={}", .{
-            @intFromEnum(ds_entry.handle_type), ds_entry.alive,
-        });
         const ds_view: wgpu.TextureView = ds_entry.handle.as(wgpu.TextureView) orelse return Value.@"null";
 
         // Parse depth load/store ops
-        var d_load: wgpu.LoadOp = .clear;
+        var d_load = raw.c.WGPULoadOp_Clear;
         const dl_val = ds_val.getPropertyStr(context, "depthLoadOp");
         defer dl_val.deinit(context);
         if (dl_val.toCString(context)) |s| {
             defer context.freeCString(s);
-            if (std.mem.eql(u8, std.mem.span(s), "load")) d_load = .load;
+            if (std.mem.eql(u8, std.mem.span(s), "load")) d_load = raw.c.WGPULoadOp_Load;
         }
 
-        var d_store: wgpu.StoreOp = .store;
+        var d_store = raw.c.WGPUStoreOp_Store;
         const ds_store_val = ds_val.getPropertyStr(context, "depthStoreOp");
         defer ds_store_val.deinit(context);
         if (ds_store_val.toCString(context)) |s| {
             defer context.freeCString(s);
-            if (std.mem.eql(u8, std.mem.span(s), "discard")) d_store = .discard;
+            if (std.mem.eql(u8, std.mem.span(s), "discard")) d_store = raw.c.WGPUStoreOp_Discard;
         }
 
         const dcv_val = ds_val.getPropertyStr(context, "depthClearValue");
         defer dcv_val.deinit(context);
         const depth_clear = @as(f32, @floatCast(dcv_val.toFloat64(context) catch 1.0));
 
-        depth_stencil = .{
-            .view = ds_view,
-            .depth_load_op = d_load,
-            .depth_store_op = d_store,
-            .depth_clear_value = depth_clear,
-        };
+        depth_stencil.view = @ptrCast(ds_view);
+        depth_stencil.depthLoadOp = @intCast(d_load);
+        depth_stencil.depthStoreOp = @intCast(d_store);
+        depth_stencil.depthClearValue = depth_clear;
     }
 
-    log.debug("beginRenderPass: color_count={}, has_depth={}, encoder={*}", .{
-        color_count,
-        has_depth,
-        @as(*anyopaque, @ptrCast(encoder)),
-    });
-    if (color_count > 0) {
-        log.debug("beginRenderPass: color[0].view={*}, load_op={}, store_op={}, clear=({d},{d},{d},{d})", .{
-            @as(*anyopaque, @ptrCast(color_attachments[0].view)),
-            @intFromEnum(color_attachments[0].load_op),
-            @intFromEnum(color_attachments[0].store_op),
-            color_attachments[0].clear_value.r,
-            color_attachments[0].clear_value.g,
-            color_attachments[0].clear_value.b,
-            color_attachments[0].clear_value.a,
-        });
-    }
-    if (has_depth) {
-        log.debug("beginRenderPass: depth.view={*}, depth_load_op={}, depth_store_op={}, clear={d}", .{
-            @as(*anyopaque, @ptrCast(depth_stencil.view)),
-            @intFromEnum(depth_stencil.depth_load_op),
-            @intFromEnum(depth_stencil.depth_store_op),
-            depth_stencil.depth_clear_value,
-        });
-    }
-
-    const render_pass = encoder.beginRenderPass(.{
-        .color_attachment_count = color_count,
-        .color_attachments = if (color_count > 0) @ptrCast(&color_attachments) else null,
-        .depth_stencil_attachment = if (has_depth) &depth_stencil else null,
-    });
-
-    log.debug("beginRenderPass: SUCCESS pass={*}", .{@as(*anyopaque, @ptrCast(render_pass))});
+    var pass_desc = std.mem.zeroes(raw.c.WGPURenderPassDescriptor);
+    pass_desc.colorAttachmentCount = color_count;
+    pass_desc.colorAttachments = if (color_count > 0) @ptrCast(&color_attachments) else null;
+    pass_desc.depthStencilAttachment = if (has_depth) &depth_stencil else null;
+    const render_pass: wgpu.RenderPassEncoder = @ptrCast(raw.c.wgpuCommandEncoderBeginRenderPass(@ptrCast(encoder), &pass_desc));
 
     const id = ht.alloc(.{ .render_pass_encoder = @ptrCast(render_pass) }) catch return Value.@"null";
     return Value.initFloat64(@floatFromInt(id.toNumber()));
@@ -2043,9 +2091,7 @@ fn gpuRenderPassSetPipelineNative(
     const pip_entry = ht.get(f64ToHandle(pip_f64)) catch return Value.undefined;
     const pipeline: wgpu.RenderPipeline = pip_entry.handle.as(wgpu.RenderPipeline) orelse return Value.undefined;
 
-    log.debug("setPipeline pass={*} pipeline={*}", .{ @as(*anyopaque, @ptrCast(pass)), @as(*anyopaque, @ptrCast(pipeline)) });
     pass.setPipeline(pipeline);
-    log.debug("setPipeline: SUCCESS", .{});
     return Value.undefined;
 }
 
@@ -2075,9 +2121,7 @@ fn gpuRenderPassSetBindGroupNative(
     const bg_entry = ht.get(f64ToHandle(bg_f64)) catch return Value.undefined;
     const bind_group: wgpu.BindGroup = bg_entry.handle.as(wgpu.BindGroup) orelse return Value.undefined;
 
-    log.debug("setBindGroup: index={} pass={*} bg={*}", .{ @as(u32, @intFromFloat(idx)), @as(*anyopaque, @ptrCast(pass)), @as(*anyopaque, @ptrCast(bind_group)) });
     pass.setBindGroup(@intFromFloat(idx), bind_group, null);
-    log.debug("setBindGroup: SUCCESS", .{});
     return Value.undefined;
 }
 
@@ -2119,7 +2163,6 @@ fn gpuRenderPassSetVertexBufferNative(
         if (!sz_val.isUndefined()) size = @intFromFloat(sz_val.toFloat64(context) catch @as(f64, @floatFromInt(std.math.maxInt(u64))));
     }
 
-    log.debug("setVertexBuffer: slot={} offset={} size={}", .{ slot, offset, size });
     pass.setVertexBuffer(slot, buffer, offset, size);
     return Value.undefined;
 }
@@ -2167,7 +2210,6 @@ fn gpuRenderPassSetIndexBufferNative(
         if (!sz_val.isUndefined()) size = @intFromFloat(sz_val.toFloat64(context) catch @as(f64, @floatFromInt(std.math.maxInt(u64))));
     }
 
-    log.debug("setIndexBuffer: format={} offset={} size={}", .{ @intFromEnum(index_format), offset, size });
     pass.setIndexBuffer(buffer, index_format, offset, size);
     return Value.undefined;
 }
@@ -2209,9 +2251,7 @@ fn gpuRenderPassDrawNative(
         if (!fi_val.isUndefined()) first_instance = @intFromFloat(fi_val.toFloat64(context) catch 0);
     }
 
-    log.debug("draw: vc={} ic={} fv={} fi={}", .{ vertex_count, instance_count, first_vertex, first_instance });
     pass.draw(vertex_count, instance_count, first_vertex, first_instance);
-    log.debug("draw: SUCCESS", .{});
     return Value.undefined;
 }
 
@@ -2257,9 +2297,7 @@ fn gpuRenderPassDrawIndexedNative(
         if (!v.isUndefined()) first_instance = @intFromFloat(v.toFloat64(context) catch 0);
     }
 
-    log.debug("drawIndexed: ic={} instc={} fi={} bv={} fInst={}", .{ index_count, instance_count, first_index, base_vertex, first_instance });
     pass.drawIndexed(index_count, instance_count, first_index, base_vertex, first_instance);
-    log.debug("drawIndexed: SUCCESS", .{});
     return Value.undefined;
 }
 
@@ -2285,9 +2323,7 @@ fn gpuRenderPassEndNative(
         return Value.undefined;
     };
 
-    log.debug("renderPassEnd", .{});
     pass.end();
-    log.debug("renderPassEnd: end() done, calling release()", .{});
     pass.release();
     ht.free(pass_id) catch {};
 
@@ -2326,7 +2362,6 @@ fn gpuRenderPassSetViewportNative(
     const min_depth: f32 = @floatCast(min_d_val.toFloat64(context) catch 0);
     const max_depth: f32 = @floatCast(max_d_val.toFloat64(context) catch 1);
 
-    log.debug("setViewport: x={d} y={d} w={d} h={d} minD={d} maxD={d}", .{ x, y, w, h, min_depth, max_depth });
     pass.setViewport(x, y, w, h, min_depth, max_depth);
     return Value.undefined;
 }
@@ -2359,7 +2394,6 @@ fn gpuRenderPassSetScissorRectNative(
     const w: u32 = @intFromFloat(w_val.toFloat64(context) catch 0);
     const h: u32 = @intFromFloat(h_val.toFloat64(context) catch 0);
 
-    log.debug("setScissorRect: x={} y={} w={} h={}", .{ x, y, w, h });
     pass.setScissorRect(x, y, w, h);
     return Value.undefined;
 }
@@ -2384,7 +2418,6 @@ fn gpuCommandEncoderFinishNative(
     const encoder: wgpu.CommandEncoder = enc_entry.handle.as(wgpu.CommandEncoder) orelse return Value.@"null";
 
     const cmd_buffer = encoder.finish(null);
-    log.debug("commandEncoderFinish: encoder={*} -> cmdBuf={*}", .{ @as(*anyopaque, @ptrCast(encoder)), @as(*anyopaque, @ptrCast(cmd_buffer)) });
     encoder.release();
 
     const cb_id = ht.alloc(.{ .command_buffer = @ptrCast(cmd_buffer) }) catch return Value.@"null";
@@ -2429,9 +2462,7 @@ fn gpuQueueSubmitNative(
         ht.free(cb_id) catch {};
     }
 
-    log.debug("queueSubmit: count={}", .{actual_count});
     gctx.queue.submit(cmd_bufs[0..actual_count]);
-    log.debug("queueSubmit: SUCCESS", .{});
     return Value.undefined;
 }
 
@@ -2511,7 +2542,6 @@ fn gpuQueueWriteBufferNative(
         const actual_len = @min(write_size, buf.len - data_offset);
         const byte_slice = buf[data_offset..][0..actual_len];
 
-        log.debug("writeBuffer: offset={} data_len={} write_size={}", .{ buffer_offset, buf.len, actual_len });
         gctx.queue.writeBuffer(buffer, buffer_offset, u8, byte_slice);
     }
 
@@ -2547,7 +2577,7 @@ fn gpuQueueWriteTextureNative(
     defer mip_val.deinit(context);
     const mip_level: u32 = @intFromFloat(mip_val.toFloat64(context) catch 0);
 
-    var origin = wgpu.Origin3D{};
+    var origin = std.mem.zeroes(raw.c.WGPUOrigin3D);
     const origin_val = dest_val.getPropertyStr(context, "origin");
     defer origin_val.deinit(context);
     if (!origin_val.isUndefined() and !origin_val.isNull()) {
@@ -2566,10 +2596,22 @@ fn gpuQueueWriteTextureNative(
         }
     }
 
-    const image_copy_texture = wgpu.ImageCopyTexture{
-        .texture = texture,
-        .mip_level = mip_level,
+    var aspect: @TypeOf(std.mem.zeroes(raw.c.WGPUTexelCopyTextureInfo).aspect) = @intCast(raw.c.WGPUTextureAspect_All);
+    const aspect_val = dest_val.getPropertyStr(context, "aspect");
+    defer aspect_val.deinit(context);
+    if (aspect_val.toCString(context)) |s| {
+        defer context.freeCString(s);
+        const aspect_str = std.mem.span(s);
+        if (std.mem.eql(u8, aspect_str, "depth-only")) aspect = @intCast(raw.c.WGPUTextureAspect_DepthOnly)
+        else if (std.mem.eql(u8, aspect_str, "stencil-only")) aspect = @intCast(raw.c.WGPUTextureAspect_StencilOnly)
+        else if (std.mem.eql(u8, aspect_str, "all")) aspect = @intCast(raw.c.WGPUTextureAspect_All);
+    }
+
+    const image_copy_texture = raw.c.WGPUTexelCopyTextureInfo{
+        .texture = @ptrCast(texture),
+        .mipLevel = mip_level,
         .origin = origin,
+        .aspect = aspect,
     };
 
     // argv[2] = data (ArrayBuffer or TypedArray)
@@ -2605,16 +2647,22 @@ fn gpuQueueWriteTextureNative(
 
     const bpr_val = layout_val.getPropertyStr(context, "bytesPerRow");
     defer bpr_val.deinit(context);
-    const bytes_per_row: u32 = @intFromFloat(bpr_val.toFloat64(context) catch 0);
+    const bytes_per_row: u32 = if (bpr_val.isUndefined() or bpr_val.isNull())
+        raw.c.WGPU_COPY_STRIDE_UNDEFINED
+    else
+        @intFromFloat(bpr_val.toFloat64(context) catch @as(f64, @floatFromInt(raw.c.WGPU_COPY_STRIDE_UNDEFINED)));
 
     const rpi_val = layout_val.getPropertyStr(context, "rowsPerImage");
     defer rpi_val.deinit(context);
-    const rows_per_image: u32 = @intFromFloat(rpi_val.toFloat64(context) catch 0);
+    const rows_per_image: u32 = if (rpi_val.isUndefined() or rpi_val.isNull())
+        raw.c.WGPU_COPY_STRIDE_UNDEFINED
+    else
+        @intFromFloat(rpi_val.toFloat64(context) catch @as(f64, @floatFromInt(raw.c.WGPU_COPY_STRIDE_UNDEFINED)));
 
-    const texture_data_layout = wgpu.TextureDataLayout{
+    const texture_data_layout = raw.c.WGPUTexelCopyBufferLayout{
         .offset = data_offset,
-        .bytes_per_row = bytes_per_row,
-        .rows_per_image = rows_per_image,
+        .bytesPerRow = bytes_per_row,
+        .rowsPerImage = rows_per_image,
     };
 
     // argv[4] = size { width, height, depthOrArrayLayers }
@@ -2626,13 +2674,13 @@ fn gpuQueueWriteTextureNative(
     const sd_val = size_val.getPropertyStr(context, "depthOrArrayLayers");
     defer sd_val.deinit(context);
 
-    const write_size = wgpu.Extent3D{
+    const write_size = raw.c.WGPUExtent3D{
         .width = @intFromFloat(sw_val.toFloat64(context) catch 1),
         .height = @intFromFloat(sh_val.toFloat64(context) catch 1),
-        .depth_or_array_layers = @intFromFloat(sd_val.toFloat64(context) catch 1),
+        .depthOrArrayLayers = @intFromFloat(sd_val.toFloat64(context) catch 1),
     };
 
-    gctx.queue.writeTexture(image_copy_texture, texture_data_layout, write_size, u8, data_buf.?);
+    raw.c.wgpuQueueWriteTexture(@ptrCast(gctx.queue), &image_copy_texture, data_buf.?.ptr, data_buf.?.len, &texture_data_layout, &write_size);
 
     return Value.undefined;
 }
@@ -2709,6 +2757,28 @@ fn gpuConfigureContextNative(
     return Value.undefined;
 }
 
+/// __native.gpuGetPreferredCanvasFormat() → string
+fn gpuGetPreferredCanvasFormatNative(
+    ctx: ?*Context,
+    _: Value,
+    _: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.@"null";
+    const bridge = getBridgeFromData(context, func_data) orelse return Value.@"null";
+    const gctx = bridge.gctx orelse return Value.initString(context, "bgra8unorm");
+
+    const format = switch (gctx.surface_config.format) {
+        raw.c.WGPUTextureFormat_RGBA8Unorm => "rgba8unorm",
+        raw.c.WGPUTextureFormat_RGBA8UnormSrgb => "rgba8unorm-srgb",
+        raw.c.WGPUTextureFormat_BGRA8Unorm => "bgra8unorm",
+        raw.c.WGPUTextureFormat_BGRA8UnormSrgb => "bgra8unorm-srgb",
+        else => "rgba8unorm",
+    };
+    return Value.initStringLen(context, format);
+}
+
 /// __native.gpuGetCurrentTexture() → number (texture handle ID)
 ///
 /// Returns a texture_view handle for the current swapchain back buffer.
@@ -2725,15 +2795,31 @@ fn gpuGetCurrentTextureNative(
     const ht = bridge.handle_table_ptr;
     const gctx = bridge.gctx orelse return Value.@"null";
 
+    // Repeated getCurrentTexture() calls within one frame should return the
+    // same swapchain handle. The actual view is released by gctx.present().
+    if (bridge.prev_swapchain_view) |prev_id| {
+        if (bridge.frame_texture_acquired) {
+            return Value.initFloat64(@floatFromInt(prev_id.toNumber()));
+        }
+        ht.free(prev_id) catch {};
+        bridge.prev_swapchain_view = null;
+    }
+
     // Mark that we acquired a frame texture — presentIfNeeded will present
     bridge.frame_texture_acquired = true;
 
-    // zgpu's swapchain returns a TextureView directly (not Texture)
-    const view = gctx.swapchain.getCurrentTextureView();
-    log.debug("getCurrentTexture: view={*}", .{@as(*anyopaque, @ptrCast(view))});
+    const view = gctx.getCurrentTextureView() orelse {
+        log.err("getCurrentTexture: no surface view available", .{});
+        bridge.frame_texture_acquired = false;
+        return Value.@"null";
+    };
 
     // Store as texture_view so createTextureView can detect the swapchain case
     const id = ht.alloc(.{ .texture_view = @ptrCast(view) }) catch return Value.@"null";
+
+    // Track this handle so we can retire it after present.
+    bridge.prev_swapchain_view = id;
+
     return Value.initFloat64(@floatFromInt(id.toNumber()));
 }
 
@@ -2753,6 +2839,10 @@ fn gpuPresentNative(
 
     _ = gctx.present();
     bridge.frame_texture_acquired = false;
+    if (bridge.prev_swapchain_view) |prev_id| {
+        bridge.handle_table_ptr.free(prev_id) catch {};
+        bridge.prev_swapchain_view = null;
+    }
     return Value.undefined;
 }
 
@@ -2773,8 +2863,11 @@ fn getHandleTableFromData(ctx: *Context, func_data: [*c]c.JSValue) ?*HandleTable
 // ---------------------------------------------------------------------------
 
 /// Parse a BlendComponent from a JS object property (e.g., blend.color or blend.alpha)
-fn parseBlendComponent(ctx: *Context, blend_val: Value, prop: [*:0]const u8) wgpu.BlendComponent {
-    var result = wgpu.BlendComponent{};
+fn parseBlendComponent(ctx: *Context, blend_val: Value, prop: [*:0]const u8) raw.c.WGPUBlendComponent {
+    var result = std.mem.zeroes(raw.c.WGPUBlendComponent);
+    result.operation = raw.c.WGPUBlendOperation_Add;
+    result.srcFactor = raw.c.WGPUBlendFactor_One;
+    result.dstFactor = raw.c.WGPUBlendFactor_Zero;
     const comp_val = blend_val.getPropertyStr(ctx, prop);
     defer comp_val.deinit(ctx);
     if (comp_val.isUndefined() or comp_val.isNull()) return result;
@@ -2784,140 +2877,300 @@ fn parseBlendComponent(ctx: *Context, blend_val: Value, prop: [*:0]const u8) wgp
     if (op_val.toCString(ctx)) |s| {
         defer ctx.freeCString(s);
         const str = std.mem.span(s);
-        if (std.mem.eql(u8, str, "add")) result.operation = .add
-        else if (std.mem.eql(u8, str, "subtract")) result.operation = .subtract
-        else if (std.mem.eql(u8, str, "reverse-subtract")) result.operation = .reverse_subtract
-        else if (std.mem.eql(u8, str, "min")) result.operation = .min
-        else if (std.mem.eql(u8, str, "max")) result.operation = .max;
+        if (std.mem.eql(u8, str, "add")) result.operation = raw.c.WGPUBlendOperation_Add
+        else if (std.mem.eql(u8, str, "subtract")) result.operation = raw.c.WGPUBlendOperation_Subtract
+        else if (std.mem.eql(u8, str, "reverse-subtract")) result.operation = raw.c.WGPUBlendOperation_ReverseSubtract
+        else if (std.mem.eql(u8, str, "min")) result.operation = raw.c.WGPUBlendOperation_Min
+        else if (std.mem.eql(u8, str, "max")) result.operation = raw.c.WGPUBlendOperation_Max;
     }
 
     const src_val = comp_val.getPropertyStr(ctx, "srcFactor");
     defer src_val.deinit(ctx);
     if (src_val.toCString(ctx)) |s| {
         defer ctx.freeCString(s);
-        result.src_factor = parseBlendFactor(std.mem.span(s));
+        result.srcFactor = parseBlendFactor(std.mem.span(s));
     }
 
     const dst_val = comp_val.getPropertyStr(ctx, "dstFactor");
     defer dst_val.deinit(ctx);
     if (dst_val.toCString(ctx)) |s| {
         defer ctx.freeCString(s);
-        result.dst_factor = parseBlendFactor(std.mem.span(s));
+        result.dstFactor = parseBlendFactor(std.mem.span(s));
     }
 
     return result;
 }
 
-fn parseBlendFactor(str: []const u8) wgpu.BlendFactor {
-    if (std.mem.eql(u8, str, "zero")) return .zero;
-    if (std.mem.eql(u8, str, "one")) return .one;
-    if (std.mem.eql(u8, str, "src")) return .src;
-    if (std.mem.eql(u8, str, "one-minus-src")) return .one_minus_src;
-    if (std.mem.eql(u8, str, "src-alpha")) return .src_alpha;
-    if (std.mem.eql(u8, str, "one-minus-src-alpha")) return .one_minus_src_alpha;
-    if (std.mem.eql(u8, str, "dst")) return .dst;
-    if (std.mem.eql(u8, str, "one-minus-dst")) return .one_minus_dst;
-    if (std.mem.eql(u8, str, "dst-alpha")) return .dst_alpha;
-    if (std.mem.eql(u8, str, "one-minus-dst-alpha")) return .one_minus_dst_alpha;
-    if (std.mem.eql(u8, str, "src-alpha-saturated")) return .src_alpha_saturated;
-    if (std.mem.eql(u8, str, "constant")) return .constant;
-    if (std.mem.eql(u8, str, "one-minus-constant")) return .one_minus_constant;
-    return .one;
+fn rawStringViewZ(str: ?[*:0]const u8) raw.c.WGPUStringView {
+    var view = std.mem.zeroes(raw.c.WGPUStringView);
+    if (str) |s| {
+        view.data = @ptrCast(s);
+        view.length = std.mem.len(s);
+    }
+    return view;
 }
 
-fn parseCompareFunction(str: []const u8) wgpu.CompareFunction {
-    if (std.mem.eql(u8, str, "never")) return .never;
-    if (std.mem.eql(u8, str, "less")) return .less;
-    if (std.mem.eql(u8, str, "equal")) return .equal;
-    if (std.mem.eql(u8, str, "less-equal")) return .less_equal;
-    if (std.mem.eql(u8, str, "greater")) return .greater;
-    if (std.mem.eql(u8, str, "not-equal")) return .not_equal;
-    if (std.mem.eql(u8, str, "greater-equal")) return .greater_equal;
-    if (std.mem.eql(u8, str, "always")) return .always;
-    return .always;
+fn rawStringViewSlice(slice: []const u8) raw.c.WGPUStringView {
+    var view = std.mem.zeroes(raw.c.WGPUStringView);
+    view.data = if (slice.len > 0) @ptrCast(slice.ptr) else null;
+    view.length = slice.len;
+    return view;
 }
 
-fn parseTextureFormat(str: []const u8) wgpu.TextureFormat {
+fn toRawBlendComponent(component: wgpu.BlendComponent) raw.c.WGPUBlendComponent {
+    var raw_component = std.mem.zeroes(raw.c.WGPUBlendComponent);
+    raw_component.operation = @intCast(@intFromEnum(component.operation));
+    raw_component.srcFactor = @intCast(@intFromEnum(component.src_factor));
+    raw_component.dstFactor = @intCast(@intFromEnum(component.dst_factor));
+    return raw_component;
+}
+
+fn toRawStencilFaceState(face: wgpu.StencilFaceState) raw.c.WGPUStencilFaceState {
+    var raw_face = std.mem.zeroes(raw.c.WGPUStencilFaceState);
+    raw_face.compare = @intCast(@intFromEnum(face.compare));
+    raw_face.failOp = @intCast(@intFromEnum(face.fail_op));
+    raw_face.depthFailOp = @intCast(@intFromEnum(face.depth_fail_op));
+    raw_face.passOp = @intCast(@intFromEnum(face.pass_op));
+    return raw_face;
+}
+
+fn parseBlendFactor(str: []const u8) raw.c.WGPUBlendFactor {
+    if (std.mem.eql(u8, str, "zero")) return raw.c.WGPUBlendFactor_Zero;
+    if (std.mem.eql(u8, str, "one")) return raw.c.WGPUBlendFactor_One;
+    if (std.mem.eql(u8, str, "src")) return raw.c.WGPUBlendFactor_Src;
+    if (std.mem.eql(u8, str, "one-minus-src")) return raw.c.WGPUBlendFactor_OneMinusSrc;
+    if (std.mem.eql(u8, str, "src-alpha")) return raw.c.WGPUBlendFactor_SrcAlpha;
+    if (std.mem.eql(u8, str, "one-minus-src-alpha")) return raw.c.WGPUBlendFactor_OneMinusSrcAlpha;
+    if (std.mem.eql(u8, str, "dst")) return raw.c.WGPUBlendFactor_Dst;
+    if (std.mem.eql(u8, str, "one-minus-dst")) return raw.c.WGPUBlendFactor_OneMinusDst;
+    if (std.mem.eql(u8, str, "dst-alpha")) return raw.c.WGPUBlendFactor_DstAlpha;
+    if (std.mem.eql(u8, str, "one-minus-dst-alpha")) return raw.c.WGPUBlendFactor_OneMinusDstAlpha;
+    if (std.mem.eql(u8, str, "src-alpha-saturated")) return raw.c.WGPUBlendFactor_SrcAlphaSaturated;
+    if (std.mem.eql(u8, str, "constant")) return raw.c.WGPUBlendFactor_Constant;
+    if (std.mem.eql(u8, str, "one-minus-constant")) return raw.c.WGPUBlendFactor_OneMinusConstant;
+    return raw.c.WGPUBlendFactor_One;
+}
+
+fn parseCompareFunction(str: []const u8) raw.c.WGPUCompareFunction {
+    if (std.mem.eql(u8, str, "never")) return raw.c.WGPUCompareFunction_Never;
+    if (std.mem.eql(u8, str, "less")) return raw.c.WGPUCompareFunction_Less;
+    if (std.mem.eql(u8, str, "equal")) return raw.c.WGPUCompareFunction_Equal;
+    if (std.mem.eql(u8, str, "less-equal")) return raw.c.WGPUCompareFunction_LessEqual;
+    if (std.mem.eql(u8, str, "greater")) return raw.c.WGPUCompareFunction_Greater;
+    if (std.mem.eql(u8, str, "not-equal")) return raw.c.WGPUCompareFunction_NotEqual;
+    if (std.mem.eql(u8, str, "greater-equal")) return raw.c.WGPUCompareFunction_GreaterEqual;
+    if (std.mem.eql(u8, str, "always")) return raw.c.WGPUCompareFunction_Always;
+    return raw.c.WGPUCompareFunction_Always;
+}
+
+fn parseTextureFormat(str: []const u8) raw.c.WGPUTextureFormat {
     // Common formats used by Three.js — ordered by likely frequency
-    if (std.mem.eql(u8, str, "bgra8unorm")) return .bgra8_unorm;
-    if (std.mem.eql(u8, str, "rgba8unorm")) return .rgba8_unorm;
-    if (std.mem.eql(u8, str, "depth24plus")) return .depth24_plus;
-    if (std.mem.eql(u8, str, "depth24plus-stencil8")) return .depth24_plus_stencil8;
-    if (std.mem.eql(u8, str, "depth32float")) return .depth32_float;
-    if (std.mem.eql(u8, str, "depth16unorm")) return .depth16_unorm;
-    if (std.mem.eql(u8, str, "depth32float-stencil8")) return .depth32_float_stencil8;
-    if (std.mem.eql(u8, str, "rgba8unorm-srgb")) return .rgba8_unorm_srgb;
-    if (std.mem.eql(u8, str, "bgra8unorm-srgb")) return .bgra8_unorm_srgb;
-    if (std.mem.eql(u8, str, "r8unorm")) return .r8_unorm;
-    if (std.mem.eql(u8, str, "r8snorm")) return .r8_snorm;
-    if (std.mem.eql(u8, str, "r8uint")) return .r8_uint;
-    if (std.mem.eql(u8, str, "r8sint")) return .r8_sint;
-    if (std.mem.eql(u8, str, "rg8unorm")) return .rg8_unorm;
-    if (std.mem.eql(u8, str, "rg8snorm")) return .rg8_snorm;
-    if (std.mem.eql(u8, str, "rg8uint")) return .rg8_uint;
-    if (std.mem.eql(u8, str, "rg8sint")) return .rg8_sint;
-    if (std.mem.eql(u8, str, "rgba8snorm")) return .rgba8_snorm;
-    if (std.mem.eql(u8, str, "rgba8uint")) return .rgba8_uint;
-    if (std.mem.eql(u8, str, "rgba8sint")) return .rgba8_sint;
-    if (std.mem.eql(u8, str, "r16float")) return .r16_float;
-    if (std.mem.eql(u8, str, "r16uint")) return .r16_uint;
-    if (std.mem.eql(u8, str, "r16sint")) return .r16_sint;
-    if (std.mem.eql(u8, str, "rg16float")) return .rg16_float;
-    if (std.mem.eql(u8, str, "rg16uint")) return .rg16_uint;
-    if (std.mem.eql(u8, str, "rg16sint")) return .rg16_sint;
-    if (std.mem.eql(u8, str, "r32float")) return .r32_float;
-    if (std.mem.eql(u8, str, "r32uint")) return .r32_uint;
-    if (std.mem.eql(u8, str, "r32sint")) return .r32_sint;
-    if (std.mem.eql(u8, str, "rg32float")) return .rg32_float;
-    if (std.mem.eql(u8, str, "rg32uint")) return .rg32_uint;
-    if (std.mem.eql(u8, str, "rg32sint")) return .rg32_sint;
-    if (std.mem.eql(u8, str, "rgba16float")) return .rgba16_float;
-    if (std.mem.eql(u8, str, "rgba16uint")) return .rgba16_uint;
-    if (std.mem.eql(u8, str, "rgba16sint")) return .rgba16_sint;
-    if (std.mem.eql(u8, str, "rgba32float")) return .rgba32_float;
-    if (std.mem.eql(u8, str, "rgba32uint")) return .rgba32_uint;
-    if (std.mem.eql(u8, str, "rgba32sint")) return .rgba32_sint;
-    if (std.mem.eql(u8, str, "rgb10a2unorm")) return .rgb10_a2_unorm;
-    if (std.mem.eql(u8, str, "rg11b10ufloat")) return .rg11_b10_ufloat;
-    if (std.mem.eql(u8, str, "rgb9e5ufloat")) return .rgb9_e5_ufloat;
-    if (std.mem.eql(u8, str, "stencil8")) return .stencil8;
+    if (std.mem.eql(u8, str, "bgra8unorm")) return raw.c.WGPUTextureFormat_BGRA8Unorm;
+    if (std.mem.eql(u8, str, "rgba8unorm")) return raw.c.WGPUTextureFormat_RGBA8Unorm;
+    if (std.mem.eql(u8, str, "depth24plus")) return raw.c.WGPUTextureFormat_Depth24Plus;
+    if (std.mem.eql(u8, str, "depth24plus-stencil8")) return raw.c.WGPUTextureFormat_Depth24PlusStencil8;
+    if (std.mem.eql(u8, str, "depth32float")) return raw.c.WGPUTextureFormat_Depth32Float;
+    if (std.mem.eql(u8, str, "depth16unorm")) return raw.c.WGPUTextureFormat_Depth16Unorm;
+    if (std.mem.eql(u8, str, "depth32float-stencil8")) return raw.c.WGPUTextureFormat_Depth32FloatStencil8;
+    if (std.mem.eql(u8, str, "rgba8unorm-srgb")) return raw.c.WGPUTextureFormat_RGBA8UnormSrgb;
+    if (std.mem.eql(u8, str, "bgra8unorm-srgb")) return raw.c.WGPUTextureFormat_BGRA8UnormSrgb;
+    if (std.mem.eql(u8, str, "r8unorm")) return raw.c.WGPUTextureFormat_R8Unorm;
+    if (std.mem.eql(u8, str, "r8snorm")) return raw.c.WGPUTextureFormat_R8Snorm;
+    if (std.mem.eql(u8, str, "r8uint")) return raw.c.WGPUTextureFormat_R8Uint;
+    if (std.mem.eql(u8, str, "r8sint")) return raw.c.WGPUTextureFormat_R8Sint;
+    if (std.mem.eql(u8, str, "rg8unorm")) return raw.c.WGPUTextureFormat_RG8Unorm;
+    if (std.mem.eql(u8, str, "rg8snorm")) return raw.c.WGPUTextureFormat_RG8Snorm;
+    if (std.mem.eql(u8, str, "rg8uint")) return raw.c.WGPUTextureFormat_RG8Uint;
+    if (std.mem.eql(u8, str, "rg8sint")) return raw.c.WGPUTextureFormat_RG8Sint;
+    if (std.mem.eql(u8, str, "rgba8snorm")) return raw.c.WGPUTextureFormat_RGBA8Snorm;
+    if (std.mem.eql(u8, str, "rgba8uint")) return raw.c.WGPUTextureFormat_RGBA8Uint;
+    if (std.mem.eql(u8, str, "rgba8sint")) return raw.c.WGPUTextureFormat_RGBA8Sint;
+    if (std.mem.eql(u8, str, "r16float")) return raw.c.WGPUTextureFormat_R16Float;
+    if (std.mem.eql(u8, str, "r16uint")) return raw.c.WGPUTextureFormat_R16Uint;
+    if (std.mem.eql(u8, str, "r16sint")) return raw.c.WGPUTextureFormat_R16Sint;
+    if (std.mem.eql(u8, str, "rg16float")) return raw.c.WGPUTextureFormat_RG16Float;
+    if (std.mem.eql(u8, str, "rg16uint")) return raw.c.WGPUTextureFormat_RG16Uint;
+    if (std.mem.eql(u8, str, "rg16sint")) return raw.c.WGPUTextureFormat_RG16Sint;
+    if (std.mem.eql(u8, str, "r32float")) return raw.c.WGPUTextureFormat_R32Float;
+    if (std.mem.eql(u8, str, "r32uint")) return raw.c.WGPUTextureFormat_R32Uint;
+    if (std.mem.eql(u8, str, "r32sint")) return raw.c.WGPUTextureFormat_R32Sint;
+    if (std.mem.eql(u8, str, "rg32float")) return raw.c.WGPUTextureFormat_RG32Float;
+    if (std.mem.eql(u8, str, "rg32uint")) return raw.c.WGPUTextureFormat_RG32Uint;
+    if (std.mem.eql(u8, str, "rg32sint")) return raw.c.WGPUTextureFormat_RG32Sint;
+    if (std.mem.eql(u8, str, "rgba16float")) return raw.c.WGPUTextureFormat_RGBA16Float;
+    if (std.mem.eql(u8, str, "rgba16uint")) return raw.c.WGPUTextureFormat_RGBA16Uint;
+    if (std.mem.eql(u8, str, "rgba16sint")) return raw.c.WGPUTextureFormat_RGBA16Sint;
+    if (std.mem.eql(u8, str, "rgba32float")) return raw.c.WGPUTextureFormat_RGBA32Float;
+    if (std.mem.eql(u8, str, "rgba32uint")) return raw.c.WGPUTextureFormat_RGBA32Uint;
+    if (std.mem.eql(u8, str, "rgba32sint")) return raw.c.WGPUTextureFormat_RGBA32Sint;
+    if (std.mem.eql(u8, str, "rgb10a2unorm")) return raw.c.WGPUTextureFormat_RGB10A2Unorm;
+    if (std.mem.eql(u8, str, "rg11b10ufloat")) return raw.c.WGPUTextureFormat_RG11B10Ufloat;
+    if (std.mem.eql(u8, str, "rgb9e5ufloat")) return raw.c.WGPUTextureFormat_RGB9E5Ufloat;
+    if (std.mem.eql(u8, str, "stencil8")) return raw.c.WGPUTextureFormat_Stencil8;
     log.warn("unknown texture format: '{s}', defaulting to bgra8unorm", .{str});
-    return .bgra8_unorm;
+    return raw.c.WGPUTextureFormat_BGRA8Unorm;
 }
 
-fn parseVertexFormat(str: []const u8) wgpu.VertexFormat {
-    if (std.mem.eql(u8, str, "float32")) return .float32;
-    if (std.mem.eql(u8, str, "float32x2")) return .float32x2;
-    if (std.mem.eql(u8, str, "float32x3")) return .float32x3;
-    if (std.mem.eql(u8, str, "float32x4")) return .float32x4;
-    if (std.mem.eql(u8, str, "uint32")) return .uint32;
-    if (std.mem.eql(u8, str, "uint32x2")) return .uint32x2;
-    if (std.mem.eql(u8, str, "uint32x3")) return .uint32x3;
-    if (std.mem.eql(u8, str, "uint32x4")) return .uint32x4;
-    if (std.mem.eql(u8, str, "sint32")) return .sint32;
-    if (std.mem.eql(u8, str, "sint32x2")) return .sint32x2;
-    if (std.mem.eql(u8, str, "sint32x3")) return .sint32x3;
-    if (std.mem.eql(u8, str, "sint32x4")) return .sint32x4;
-    if (std.mem.eql(u8, str, "float16x2")) return .float16x2;
-    if (std.mem.eql(u8, str, "float16x4")) return .float16x4;
-    if (std.mem.eql(u8, str, "uint8x2")) return .uint8x2;
-    if (std.mem.eql(u8, str, "uint8x4")) return .uint8x4;
-    if (std.mem.eql(u8, str, "sint8x2")) return .sint8x2;
-    if (std.mem.eql(u8, str, "sint8x4")) return .sint8x4;
-    if (std.mem.eql(u8, str, "unorm8x2")) return .unorm8x2;
-    if (std.mem.eql(u8, str, "unorm8x4")) return .unorm8x4;
-    if (std.mem.eql(u8, str, "snorm8x2")) return .snorm8x2;
-    if (std.mem.eql(u8, str, "snorm8x4")) return .snorm8x4;
-    if (std.mem.eql(u8, str, "uint16x2")) return .uint16x2;
-    if (std.mem.eql(u8, str, "uint16x4")) return .uint16x4;
-    if (std.mem.eql(u8, str, "sint16x2")) return .sint16x2;
-    if (std.mem.eql(u8, str, "sint16x4")) return .sint16x4;
-    if (std.mem.eql(u8, str, "unorm16x2")) return .unorm16x2;
-    if (std.mem.eql(u8, str, "unorm16x4")) return .unorm16x4;
-    if (std.mem.eql(u8, str, "snorm16x2")) return .snorm16x2;
-    if (std.mem.eql(u8, str, "snorm16x4")) return .snorm16x4;
+fn parseVertexFormat(str: []const u8) raw.c.WGPUVertexFormat {
+    if (std.mem.eql(u8, str, "float32")) return raw.c.WGPUVertexFormat_Float32;
+    if (std.mem.eql(u8, str, "float32x2")) return raw.c.WGPUVertexFormat_Float32x2;
+    if (std.mem.eql(u8, str, "float32x3")) return raw.c.WGPUVertexFormat_Float32x3;
+    if (std.mem.eql(u8, str, "float32x4")) return raw.c.WGPUVertexFormat_Float32x4;
+    if (std.mem.eql(u8, str, "uint32")) return raw.c.WGPUVertexFormat_Uint32;
+    if (std.mem.eql(u8, str, "uint32x2")) return raw.c.WGPUVertexFormat_Uint32x2;
+    if (std.mem.eql(u8, str, "uint32x3")) return raw.c.WGPUVertexFormat_Uint32x3;
+    if (std.mem.eql(u8, str, "uint32x4")) return raw.c.WGPUVertexFormat_Uint32x4;
+    if (std.mem.eql(u8, str, "sint32")) return raw.c.WGPUVertexFormat_Sint32;
+    if (std.mem.eql(u8, str, "sint32x2")) return raw.c.WGPUVertexFormat_Sint32x2;
+    if (std.mem.eql(u8, str, "sint32x3")) return raw.c.WGPUVertexFormat_Sint32x3;
+    if (std.mem.eql(u8, str, "sint32x4")) return raw.c.WGPUVertexFormat_Sint32x4;
+    if (std.mem.eql(u8, str, "float16x2")) return raw.c.WGPUVertexFormat_Float16x2;
+    if (std.mem.eql(u8, str, "float16x4")) return raw.c.WGPUVertexFormat_Float16x4;
+    if (std.mem.eql(u8, str, "uint8x2")) return raw.c.WGPUVertexFormat_Uint8x2;
+    if (std.mem.eql(u8, str, "uint8x4")) return raw.c.WGPUVertexFormat_Uint8x4;
+    if (std.mem.eql(u8, str, "sint8x2")) return raw.c.WGPUVertexFormat_Sint8x2;
+    if (std.mem.eql(u8, str, "sint8x4")) return raw.c.WGPUVertexFormat_Sint8x4;
+    if (std.mem.eql(u8, str, "unorm8x2")) return raw.c.WGPUVertexFormat_Unorm8x2;
+    if (std.mem.eql(u8, str, "unorm8x4")) return raw.c.WGPUVertexFormat_Unorm8x4;
+    if (std.mem.eql(u8, str, "snorm8x2")) return raw.c.WGPUVertexFormat_Snorm8x2;
+    if (std.mem.eql(u8, str, "snorm8x4")) return raw.c.WGPUVertexFormat_Snorm8x4;
+    if (std.mem.eql(u8, str, "uint16x2")) return raw.c.WGPUVertexFormat_Uint16x2;
+    if (std.mem.eql(u8, str, "uint16x4")) return raw.c.WGPUVertexFormat_Uint16x4;
+    if (std.mem.eql(u8, str, "sint16x2")) return raw.c.WGPUVertexFormat_Sint16x2;
+    if (std.mem.eql(u8, str, "sint16x4")) return raw.c.WGPUVertexFormat_Sint16x4;
+    if (std.mem.eql(u8, str, "unorm16x2")) return raw.c.WGPUVertexFormat_Unorm16x2;
+    if (std.mem.eql(u8, str, "unorm16x4")) return raw.c.WGPUVertexFormat_Unorm16x4;
+    if (std.mem.eql(u8, str, "snorm16x2")) return raw.c.WGPUVertexFormat_Snorm16x2;
+    if (std.mem.eql(u8, str, "snorm16x4")) return raw.c.WGPUVertexFormat_Snorm16x4;
     log.warn("unknown vertex format: '{s}', defaulting to float32x3", .{str});
-    return .float32x3;
+    return raw.c.WGPUVertexFormat_Float32x3;
+}
+
+fn translateLegacyTextureFormatNumeric(n: u32) raw.c.WGPUTextureFormat {
+    return switch (n) {
+        @intFromEnum(wgpu.TextureFormat.r8_unorm) => raw.c.WGPUTextureFormat_R8Unorm,
+        @intFromEnum(wgpu.TextureFormat.r8_snorm) => raw.c.WGPUTextureFormat_R8Snorm,
+        @intFromEnum(wgpu.TextureFormat.r8_uint) => raw.c.WGPUTextureFormat_R8Uint,
+        @intFromEnum(wgpu.TextureFormat.r8_sint) => raw.c.WGPUTextureFormat_R8Sint,
+        @intFromEnum(wgpu.TextureFormat.r16_uint) => raw.c.WGPUTextureFormat_R16Uint,
+        @intFromEnum(wgpu.TextureFormat.r16_sint) => raw.c.WGPUTextureFormat_R16Sint,
+        @intFromEnum(wgpu.TextureFormat.r16_float) => raw.c.WGPUTextureFormat_R16Float,
+        @intFromEnum(wgpu.TextureFormat.rg8_unorm) => raw.c.WGPUTextureFormat_RG8Unorm,
+        @intFromEnum(wgpu.TextureFormat.rg8_snorm) => raw.c.WGPUTextureFormat_RG8Snorm,
+        @intFromEnum(wgpu.TextureFormat.rg8_uint) => raw.c.WGPUTextureFormat_RG8Uint,
+        @intFromEnum(wgpu.TextureFormat.rg8_sint) => raw.c.WGPUTextureFormat_RG8Sint,
+        @intFromEnum(wgpu.TextureFormat.r32_float) => raw.c.WGPUTextureFormat_R32Float,
+        @intFromEnum(wgpu.TextureFormat.r32_uint) => raw.c.WGPUTextureFormat_R32Uint,
+        @intFromEnum(wgpu.TextureFormat.r32_sint) => raw.c.WGPUTextureFormat_R32Sint,
+        @intFromEnum(wgpu.TextureFormat.rg16_uint) => raw.c.WGPUTextureFormat_RG16Uint,
+        @intFromEnum(wgpu.TextureFormat.rg16_sint) => raw.c.WGPUTextureFormat_RG16Sint,
+        @intFromEnum(wgpu.TextureFormat.rg16_float) => raw.c.WGPUTextureFormat_RG16Float,
+        @intFromEnum(wgpu.TextureFormat.rgba8_unorm) => raw.c.WGPUTextureFormat_RGBA8Unorm,
+        @intFromEnum(wgpu.TextureFormat.rgba8_unorm_srgb) => raw.c.WGPUTextureFormat_RGBA8UnormSrgb,
+        @intFromEnum(wgpu.TextureFormat.rgba8_snorm) => raw.c.WGPUTextureFormat_RGBA8Snorm,
+        @intFromEnum(wgpu.TextureFormat.rgba8_uint) => raw.c.WGPUTextureFormat_RGBA8Uint,
+        @intFromEnum(wgpu.TextureFormat.rgba8_sint) => raw.c.WGPUTextureFormat_RGBA8Sint,
+        @intFromEnum(wgpu.TextureFormat.bgra8_unorm) => raw.c.WGPUTextureFormat_BGRA8Unorm,
+        @intFromEnum(wgpu.TextureFormat.bgra8_unorm_srgb) => raw.c.WGPUTextureFormat_BGRA8UnormSrgb,
+        @intFromEnum(wgpu.TextureFormat.rgb10_a2_unorm) => raw.c.WGPUTextureFormat_RGB10A2Unorm,
+        @intFromEnum(wgpu.TextureFormat.rg11_b10_ufloat) => raw.c.WGPUTextureFormat_RG11B10Ufloat,
+        @intFromEnum(wgpu.TextureFormat.rgb9_e5_ufloat) => raw.c.WGPUTextureFormat_RGB9E5Ufloat,
+        @intFromEnum(wgpu.TextureFormat.rg32_float) => raw.c.WGPUTextureFormat_RG32Float,
+        @intFromEnum(wgpu.TextureFormat.rg32_uint) => raw.c.WGPUTextureFormat_RG32Uint,
+        @intFromEnum(wgpu.TextureFormat.rg32_sint) => raw.c.WGPUTextureFormat_RG32Sint,
+        @intFromEnum(wgpu.TextureFormat.rgba16_uint) => raw.c.WGPUTextureFormat_RGBA16Uint,
+        @intFromEnum(wgpu.TextureFormat.rgba16_sint) => raw.c.WGPUTextureFormat_RGBA16Sint,
+        @intFromEnum(wgpu.TextureFormat.rgba16_float) => raw.c.WGPUTextureFormat_RGBA16Float,
+        @intFromEnum(wgpu.TextureFormat.rgba32_float) => raw.c.WGPUTextureFormat_RGBA32Float,
+        @intFromEnum(wgpu.TextureFormat.rgba32_uint) => raw.c.WGPUTextureFormat_RGBA32Uint,
+        @intFromEnum(wgpu.TextureFormat.rgba32_sint) => raw.c.WGPUTextureFormat_RGBA32Sint,
+        @intFromEnum(wgpu.TextureFormat.stencil8) => raw.c.WGPUTextureFormat_Stencil8,
+        @intFromEnum(wgpu.TextureFormat.depth16_unorm) => raw.c.WGPUTextureFormat_Depth16Unorm,
+        @intFromEnum(wgpu.TextureFormat.depth24_plus) => raw.c.WGPUTextureFormat_Depth24Plus,
+        @intFromEnum(wgpu.TextureFormat.depth24_plus_stencil8) => raw.c.WGPUTextureFormat_Depth24PlusStencil8,
+        @intFromEnum(wgpu.TextureFormat.depth32_float) => raw.c.WGPUTextureFormat_Depth32Float,
+        @intFromEnum(wgpu.TextureFormat.depth32_float_stencil8) => raw.c.WGPUTextureFormat_Depth32FloatStencil8,
+        else => @as(raw.c.WGPUTextureFormat, @intCast(n)),
+    };
+}
+
+fn translateLegacyBufferBindingTypeNumeric(n: u32) raw.c.WGPUBufferBindingType {
+    return switch (n) {
+        @intFromEnum(wgpu.BufferBindingType.uniform) => raw.c.WGPUBufferBindingType_Uniform,
+        @intFromEnum(wgpu.BufferBindingType.storage) => raw.c.WGPUBufferBindingType_Storage,
+        @intFromEnum(wgpu.BufferBindingType.read_only_storage) => raw.c.WGPUBufferBindingType_ReadOnlyStorage,
+        else => @as(raw.c.WGPUBufferBindingType, @intCast(n)),
+    };
+}
+
+fn translateLegacySamplerBindingTypeNumeric(n: u32) raw.c.WGPUSamplerBindingType {
+    return switch (n) {
+        @intFromEnum(wgpu.SamplerBindingType.filtering) => raw.c.WGPUSamplerBindingType_Filtering,
+        @intFromEnum(wgpu.SamplerBindingType.non_filtering) => raw.c.WGPUSamplerBindingType_NonFiltering,
+        @intFromEnum(wgpu.SamplerBindingType.comparison) => raw.c.WGPUSamplerBindingType_Comparison,
+        else => @as(raw.c.WGPUSamplerBindingType, @intCast(n)),
+    };
+}
+
+fn translateLegacyTextureSampleTypeNumeric(n: u32) raw.c.WGPUTextureSampleType {
+    return switch (n) {
+        @intFromEnum(wgpu.TextureSampleType.float) => raw.c.WGPUTextureSampleType_Float,
+        @intFromEnum(wgpu.TextureSampleType.unfilterable_float) => raw.c.WGPUTextureSampleType_UnfilterableFloat,
+        @intFromEnum(wgpu.TextureSampleType.depth) => raw.c.WGPUTextureSampleType_Depth,
+        @intFromEnum(wgpu.TextureSampleType.sint) => raw.c.WGPUTextureSampleType_Sint,
+        @intFromEnum(wgpu.TextureSampleType.uint) => raw.c.WGPUTextureSampleType_Uint,
+        else => @as(raw.c.WGPUTextureSampleType, @intCast(n)),
+    };
+}
+
+fn translateLegacyCompareFunctionNumeric(n: u32) raw.c.WGPUCompareFunction {
+    return switch (n) {
+        @intFromEnum(wgpu.CompareFunction.never) => raw.c.WGPUCompareFunction_Never,
+        @intFromEnum(wgpu.CompareFunction.less) => raw.c.WGPUCompareFunction_Less,
+        @intFromEnum(wgpu.CompareFunction.equal) => raw.c.WGPUCompareFunction_Equal,
+        @intFromEnum(wgpu.CompareFunction.less_equal) => raw.c.WGPUCompareFunction_LessEqual,
+        @intFromEnum(wgpu.CompareFunction.greater) => raw.c.WGPUCompareFunction_Greater,
+        @intFromEnum(wgpu.CompareFunction.not_equal) => raw.c.WGPUCompareFunction_NotEqual,
+        @intFromEnum(wgpu.CompareFunction.greater_equal) => raw.c.WGPUCompareFunction_GreaterEqual,
+        @intFromEnum(wgpu.CompareFunction.always) => raw.c.WGPUCompareFunction_Always,
+        else => @as(raw.c.WGPUCompareFunction, @intCast(n)),
+    };
+}
+
+fn translateLegacyVertexFormatNumeric(n: u32) raw.c.WGPUVertexFormat {
+    return switch (n) {
+        @intFromEnum(wgpu.VertexFormat.float32) => raw.c.WGPUVertexFormat_Float32,
+        @intFromEnum(wgpu.VertexFormat.float32x2) => raw.c.WGPUVertexFormat_Float32x2,
+        @intFromEnum(wgpu.VertexFormat.float32x3) => raw.c.WGPUVertexFormat_Float32x3,
+        @intFromEnum(wgpu.VertexFormat.float32x4) => raw.c.WGPUVertexFormat_Float32x4,
+        @intFromEnum(wgpu.VertexFormat.uint32) => raw.c.WGPUVertexFormat_Uint32,
+        @intFromEnum(wgpu.VertexFormat.uint32x2) => raw.c.WGPUVertexFormat_Uint32x2,
+        @intFromEnum(wgpu.VertexFormat.uint32x3) => raw.c.WGPUVertexFormat_Uint32x3,
+        @intFromEnum(wgpu.VertexFormat.uint32x4) => raw.c.WGPUVertexFormat_Uint32x4,
+        @intFromEnum(wgpu.VertexFormat.sint32) => raw.c.WGPUVertexFormat_Sint32,
+        @intFromEnum(wgpu.VertexFormat.sint32x2) => raw.c.WGPUVertexFormat_Sint32x2,
+        @intFromEnum(wgpu.VertexFormat.sint32x3) => raw.c.WGPUVertexFormat_Sint32x3,
+        @intFromEnum(wgpu.VertexFormat.sint32x4) => raw.c.WGPUVertexFormat_Sint32x4,
+        @intFromEnum(wgpu.VertexFormat.float16x2) => raw.c.WGPUVertexFormat_Float16x2,
+        @intFromEnum(wgpu.VertexFormat.float16x4) => raw.c.WGPUVertexFormat_Float16x4,
+        @intFromEnum(wgpu.VertexFormat.uint8x2) => raw.c.WGPUVertexFormat_Uint8x2,
+        @intFromEnum(wgpu.VertexFormat.uint8x4) => raw.c.WGPUVertexFormat_Uint8x4,
+        @intFromEnum(wgpu.VertexFormat.sint8x2) => raw.c.WGPUVertexFormat_Sint8x2,
+        @intFromEnum(wgpu.VertexFormat.sint8x4) => raw.c.WGPUVertexFormat_Sint8x4,
+        @intFromEnum(wgpu.VertexFormat.unorm8x2) => raw.c.WGPUVertexFormat_Unorm8x2,
+        @intFromEnum(wgpu.VertexFormat.unorm8x4) => raw.c.WGPUVertexFormat_Unorm8x4,
+        @intFromEnum(wgpu.VertexFormat.snorm8x2) => raw.c.WGPUVertexFormat_Snorm8x2,
+        @intFromEnum(wgpu.VertexFormat.snorm8x4) => raw.c.WGPUVertexFormat_Snorm8x4,
+        @intFromEnum(wgpu.VertexFormat.uint16x2) => raw.c.WGPUVertexFormat_Uint16x2,
+        @intFromEnum(wgpu.VertexFormat.uint16x4) => raw.c.WGPUVertexFormat_Uint16x4,
+        @intFromEnum(wgpu.VertexFormat.sint16x2) => raw.c.WGPUVertexFormat_Sint16x2,
+        @intFromEnum(wgpu.VertexFormat.sint16x4) => raw.c.WGPUVertexFormat_Sint16x4,
+        @intFromEnum(wgpu.VertexFormat.unorm16x2) => raw.c.WGPUVertexFormat_Unorm16x2,
+        @intFromEnum(wgpu.VertexFormat.unorm16x4) => raw.c.WGPUVertexFormat_Unorm16x4,
+        @intFromEnum(wgpu.VertexFormat.snorm16x2) => raw.c.WGPUVertexFormat_Snorm16x2,
+        @intFromEnum(wgpu.VertexFormat.snorm16x4) => raw.c.WGPUVertexFormat_Snorm16x4,
+        else => @as(raw.c.WGPUVertexFormat, @intCast(n)),
+    };
 }
 
 // ---------------------------------------------------------------------------

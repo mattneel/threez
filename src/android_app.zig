@@ -1,11 +1,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const zgpu = @import("zgpu");
-const wgpu = zgpu.wgpu;
+const dawn = @import("dawn/context.zig");
+const wgpu = dawn.wgpu;
 const AndroidWindow = @import("android_window.zig").AndroidWindow;
 const AndroidRuntime = @import("android_runtime.zig").AndroidRuntime;
 const EventBridge = @import("event_bridge.zig").EventBridge;
 const fetch = @import("polyfills/fetch.zig");
+const image = @import("polyfills/image.zig");
 
 pub const c = @cImport({
     @cInclude("android_native_app_glue.h");
@@ -63,6 +64,9 @@ pub fn run(opaque_app: *anyopaque) void {
             fetch.setAssetManager(@ptrCast(activity.*.assetManager));
             logInfo("AAssetManager registered");
         }
+        if (activity.*.internalDataPath != null) {
+            image.setTempDir(std.mem.span(activity.*.internalDataPath)) catch {};
+        }
     }
 
     logInfo("Waiting for window...");
@@ -93,6 +97,7 @@ pub fn run(opaque_app: *anyopaque) void {
                 // Load and evaluate user script from APK assets
                 if (loadAsset(allocator, app.asset_manager, "app.js")) |script| {
                     defer allocator.free(script);
+                    logFmt("Loaded app.js ({} bytes), evaluating...", .{script.len});
                     app.runtime.?.evalScript(script, "app.js") catch |err| {
                         logFmt("Script eval failed: {}", .{err});
                     };
@@ -222,8 +227,8 @@ fn loadAsset(allocator: std.mem.Allocator, mgr_opt: ?*c.AAssetManager, path: [*:
 
 // -- Clear-color render (T11 integration test) --
 
-fn renderClearColor(gctx: *zgpu.GraphicsContext) void {
-    const view = gctx.swapchain.getCurrentTextureView();
+fn renderClearColor(gctx: *dawn.GraphicsContext) void {
+    const view = gctx.getCurrentTextureView() orelse return;
     defer view.release();
 
     const encoder = gctx.device.createCommandEncoder(.{ .label = "clear" });

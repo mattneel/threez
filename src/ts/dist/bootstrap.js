@@ -259,12 +259,12 @@
   var GPUCanvasContext = class {
     _configured = false;
     _device = null;
-    _format = "bgra8unorm";
+    _format = getNative()?.gpuGetPreferredCanvasFormat?.() ?? "bgra8unorm";
     _width = 0;
     _height = 0;
     configure(config) {
       this._device = config.device;
-      this._format = config.format ?? "bgra8unorm";
+      this._format = config.format ?? getNative()?.gpuGetPreferredCanvasFormat?.() ?? "bgra8unorm";
       this._configured = true;
       const g2 = globalThis;
       this._width = g2?.window?.innerWidth ?? 0;
@@ -700,7 +700,12 @@
     // --- T17: Shader & pipeline creation ---
     createShaderModule(descriptor) {
       const native = getNative();
-      const code = descriptor.code.replace(/@interpolate\(flat,\s*either\)/g, "@interpolate(flat)");
+      let code = descriptor.code;
+      code = code.replace(/@interpolate\(\s*flat\s*,\s*either\s*\)/g, "@interpolate(flat)");
+      code = code.replace(/@binding\(\s*(\d+)\s*\)/g, "@binding($1)");
+      code = code.replace(/@group\(\s*(\d+)\s*\)/g, "@group($1)");
+      code = code.replace(/@location\(\s*(\d+)\s*\)/g, "@location($1)");
+      code = code.replace(/@builtin\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g, "@builtin($1)");
       const patched = {
         ...descriptor,
         code
@@ -839,7 +844,7 @@
       return new GPUAdapter(handle);
     }
     getPreferredCanvasFormat() {
-      return "bgra8unorm";
+      return getNative()?.gpuGetPreferredCanvasFormat?.() ?? "bgra8unorm";
     }
   };
 

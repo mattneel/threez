@@ -5,8 +5,43 @@ const runtime_mod = @import("runtime.zig");
 const HandleTable = @import("handle_table.zig").HandleTable;
 
 const is_android = builtin.os.tag == .linux and builtin.abi == .android;
+const android_log_c = if (is_android) @cImport(@cInclude("android/log.h")) else struct {};
 
 const log = std.log.scoped(.threez);
+
+// On Android, route Zig panics to logcat so we can see the message.
+pub const std_options: std.Options = if (is_android) .{
+    .logFn = androidLogFn,
+} else .{};
+
+fn androidLogFn(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    _ = scope;
+    var buf: [4096]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, format, args) catch return;
+    buf[@min(msg.len, buf.len - 1)] = 0;
+    const android_level: c_int = switch (level) {
+        .debug => android_log_c.ANDROID_LOG_DEBUG,
+        .info => android_log_c.ANDROID_LOG_INFO,
+        .warn => android_log_c.ANDROID_LOG_WARN,
+        .err => android_log_c.ANDROID_LOG_ERROR,
+    };
+    _ = android_log_c.__android_log_write(android_level, "threez.zig", @ptrCast(buf[0..].ptr));
+}
+
+pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
+    if (is_android) {
+        var buf: [4096]u8 = undefined;
+        const panic_msg = std.fmt.bufPrint(&buf, "PANIC: {s} (ret_addr=0x{?x})", .{ msg, ret_addr }) catch "PANIC: (format failed)";
+        buf[@min(panic_msg.len, buf.len - 1)] = 0;
+        _ = android_log_c.__android_log_write(android_log_c.ANDROID_LOG_FATAL, "threez", @ptrCast(buf[0..].ptr));
+    }
+    std.posix.abort();
+}
 
 const version_string = "0.1.0";
 

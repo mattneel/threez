@@ -67,6 +67,12 @@ pub const BackendType = enum(u32) {
     opengles,
 };
 
+pub const Status = enum(u32) {
+    undefined,
+    success,
+    err,
+};
+
 pub const BlendFactor = switch (emscripten) {
     true => enum(u32) {
         undef = 0x00000000,
@@ -703,6 +709,25 @@ pub const ChainedStruct = extern struct {
 pub const ChainedStructOut = extern struct {
     next: ?*ChainedStructOut,
     struct_type: StructType,
+};
+
+pub const StringView = extern struct {
+    data: ?[*]const u8,
+    length: usize,
+};
+
+pub const AdapterInfo = extern struct {
+    next_in_chain: ?*ChainedStructOut = null,
+    vendor: StringView,
+    architecture: StringView,
+    device: StringView,
+    description: StringView,
+    backend_type: BackendType,
+    adapter_type: AdapterType,
+    vendor_id: u32,
+    device_id: u32,
+    subgroup_min_size: u32,
+    subgroup_max_size: u32,
 };
 
 pub const AdapterProperties = extern struct {
@@ -1355,6 +1380,11 @@ pub const Adapter = *opaque {
         wgpuAdapterGetProperties(adapter, properties);
     }
     extern fn wgpuAdapterGetProperties(adapter: Adapter, properties: *AdapterProperties) void;
+
+    pub fn getInfo(adapter: Adapter, info: *AdapterInfo) Status {
+        return wgpuAdapterGetInfo(adapter, info);
+    }
+    extern fn wgpuAdapterGetInfo(adapter: Adapter, info: *AdapterInfo) Status;
 
     pub fn hasFeature(adapter: Adapter, feature: FeatureName) bool {
         return wgpuAdapterHasFeature(adapter, feature);

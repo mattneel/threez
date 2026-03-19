@@ -60,10 +60,21 @@ fn nativeReadFileSync(
     defer ctx.freeCString(str_result.ptr);
 
     // On Android, try AAssetManager for relative paths (files bundled in APK).
+    // Prefer the exact relative path first because packaged assets may already
+    // live under an `assets/` subdirectory inside the APK assets root. If that
+    // misses, fall back to stripping a leading `assets/` prefix for callers
+    // that expect the path to be rooted at the APK assets directory.
     if (is_android and !std.fs.path.isAbsolute(path_slice)) {
         if (readFromAssetManager(path_slice)) |contents| {
             defer std.heap.page_allocator.free(contents);
             return Value.initUint8ArrayCopy(ctx, contents);
+        }
+        if (std.mem.startsWith(u8, path_slice, "assets/")) {
+            const asset_path = path_slice["assets/".len..];
+            if (readFromAssetManager(asset_path)) |contents| {
+                defer std.heap.page_allocator.free(contents);
+                return Value.initUint8ArrayCopy(ctx, contents);
+            }
         }
     }
 

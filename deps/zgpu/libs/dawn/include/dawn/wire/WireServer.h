@@ -1,21 +1,35 @@
-// Copyright 2019 The Dawn Authors
+// Copyright 2019 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef INCLUDE_DAWN_WIRE_WIRESERVER_H_
 #define INCLUDE_DAWN_WIRE_WIRESERVER_H_
 
 #include <memory>
+#include <span>
 
 #include "dawn/wire/Wire.h"
 
@@ -32,6 +46,7 @@ struct DAWN_WIRE_EXPORT WireServerDescriptor {
     const DawnProcTable* procs;
     CommandSerializer* serializer;
     server::MemoryTransferService* memoryTransferService = nullptr;
+    bool useSpontaneousCallbacks = false;
 };
 
 class DAWN_WIRE_EXPORT WireServer : public CommandHandler {
@@ -41,20 +56,10 @@ class DAWN_WIRE_EXPORT WireServer : public CommandHandler {
 
     const volatile char* HandleCommands(const volatile char* commands, size_t size) override;
 
-    bool InjectTexture(WGPUTexture texture,
-                       uint32_t id,
-                       uint32_t generation,
-                       uint32_t deviceId,
-                       uint32_t deviceGeneration);
-    bool InjectSwapChain(WGPUSwapChain swapchain,
-                         uint32_t id,
-                         uint32_t generation,
-                         uint32_t deviceId,
-                         uint32_t deviceGeneration);
-
-    bool InjectDevice(WGPUDevice device, uint32_t id, uint32_t generation);
-
-    bool InjectInstance(WGPUInstance instance, uint32_t id, uint32_t generation);
+    bool InjectBuffer(WGPUBuffer buffer, const Handle& handle, const Handle& deviceHandle);
+    bool InjectTexture(WGPUTexture texture, const Handle& handle, const Handle& deviceHandle);
+    bool InjectSurface(WGPUSurface surface, const Handle& handle, const Handle& instanceHandle);
+    bool InjectInstance(WGPUInstance instance, const Handle& handle);
 
     // Look up a device by (id, generation) pair. Returns nullptr if the generation
     // has expired or the id is not found.
@@ -71,7 +76,7 @@ class DAWN_WIRE_EXPORT WireServer : public CommandHandler {
     bool IsDeviceKnown(WGPUDevice device) const;
 
   private:
-    std::unique_ptr<server::Server> mImpl;
+    std::shared_ptr<server::Server> mImpl;
 };
 
 namespace server {
@@ -85,6 +90,7 @@ class DAWN_WIRE_EXPORT MemoryTransferService {
 
     // Deserialize data to create Read/Write handles. These handles are for the client
     // to Read/Write data.
+    // TODO(https://issues.chromium.org/492456046): Pass as a `span<uint8_t> deseriazlizeData`.
     virtual bool DeserializeReadHandle(const void* deserializePointer,
                                        size_t deserializeSize,
                                        ReadHandle** readHandle) = 0;
@@ -105,6 +111,9 @@ class DAWN_WIRE_EXPORT MemoryTransferService {
         // Serialize the data update for the range (offset, offset + size) into
         // |serializePointer| to the client There could be nothing to be serialized (if
         // using shared memory)
+        // TODO(https://issues.chromium.org/492456046): Replace data+size with a `span<uint8_t>
+        // update` and pass the deserializePointer as a span with the size from
+        // SizeOfSerializeDataUpdate.
         virtual void SerializeDataUpdate(const void* data,
                                          size_t offset,
                                          size_t size,
@@ -122,6 +131,8 @@ class DAWN_WIRE_EXPORT MemoryTransferService {
 
         // Set the target for writes from the client. DeserializeFlush should copy data
         // into the target.
+        // TODO(https://issues.chromium.org/492456046): Remove the setters / getters for data and
+        // instead pass them directly as a span in DeserializeDataUpdate.
         void SetTarget(void* data);
         // Set Staging data length for OOB check
         void SetDataLength(size_t dataLength);
@@ -133,14 +144,26 @@ class DAWN_WIRE_EXPORT MemoryTransferService {
                                            size_t deserializeSize,
                                            size_t offset,
                                            size_t size) = 0;
+        std::span<uint8_t> GetTarget() const;
 
-      protected:
-        void* mTargetData = nullptr;
-        size_t mDataLength = 0;
+        std::span<uint8_t> GetSource() const {
+            return std::span<uint8_t>(GetSourceData(), GetSourceSize());
+        }
 
       private:
         WriteHandle(const WriteHandle&) = delete;
         WriteHandle& operator=(const WriteHandle&) = delete;
+
+        // Returns a direct pointer to the source data that will
+        // be copied into Target in DeserializeDataUpdate if accessible, nullptr
+        // otherwise.
+        // TODO(https://issues.chromium.org/492456046): Remove in favor of making GetSourceData
+        // virtual.
+        virtual uint8_t* GetSourceData() const { return nullptr; }
+        virtual size_t GetSourceSize() const { return 0; }
+
+        uint8_t* mTargetData = nullptr;
+        size_t mDataLength = 0;
     };
 
   private:

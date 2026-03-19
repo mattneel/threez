@@ -137,13 +137,13 @@ export class GPUTexture {
 export class GPUCanvasContext {
   private _configured = false;
   private _device: GPUDevice | null = null;
-  private _format: string = "bgra8unorm";
+  private _format: string = getNative()?.gpuGetPreferredCanvasFormat?.() ?? "bgra8unorm";
   private _width: number = 0;
   private _height: number = 0;
 
   configure(config: { device: GPUDevice; format?: string; alphaMode?: string }): void {
     this._device = config.device;
-    this._format = config.format ?? "bgra8unorm";
+    this._format = config.format ?? getNative()?.gpuGetPreferredCanvasFormat?.() ?? "bgra8unorm";
     this._configured = true;
     const g = globalThis as any;
     this._width = g?.window?.innerWidth ?? 0;
@@ -772,8 +772,14 @@ export class GPUDevice extends EventTarget {
 
   createShaderModule(descriptor: { code: string; label?: string }): GPUShaderModule {
     const native = getNative();
-    // Patch WGSL: Dawn's Tint doesn't support 'either' interpolation sampling
-    const code = descriptor.code.replace(/@interpolate\(flat,\s*either\)/g, "@interpolate(flat)");
+    // Normalize attribute syntax before passing WGSL into the native bridge.
+    // This is a narrow compatibility shim for Android-specific parser crashes.
+    let code = descriptor.code;
+    code = code.replace(/@interpolate\(\s*flat\s*,\s*either\s*\)/g, "@interpolate(flat)");
+    code = code.replace(/@binding\(\s*(\d+)\s*\)/g, "@binding($1)");
+    code = code.replace(/@group\(\s*(\d+)\s*\)/g, "@group($1)");
+    code = code.replace(/@location\(\s*(\d+)\s*\)/g, "@location($1)");
+    code = code.replace(/@builtin\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g, "@builtin($1)");
     const patched = {
       ...descriptor,
       code: code,
@@ -939,6 +945,6 @@ export class GPU {
   }
 
   getPreferredCanvasFormat(): string {
-    return "bgra8unorm";
+    return getNative()?.gpuGetPreferredCanvasFormat?.() ?? "bgra8unorm";
   }
 }

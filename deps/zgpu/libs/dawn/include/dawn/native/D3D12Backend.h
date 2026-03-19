@@ -1,23 +1,36 @@
-// Copyright 2018 The Dawn Authors
+// Copyright 2018 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef INCLUDE_DAWN_NATIVE_D3D12BACKEND_H_
 #define INCLUDE_DAWN_NATIVE_D3D12BACKEND_H_
 
-#include <DXGI1_4.h>
+#include <d3d11on12.h>
 #include <d3d12.h>
-#include <windows.h>
+#include <dxgi1_4.h>
 #include <wrl/client.h>
 
 #include "dawn/native/D3DBackend.h"
@@ -34,18 +47,39 @@ enum MemorySegment {
     NonLocal,
 };
 
+DAWN_NATIVE_EXPORT Microsoft::WRL::ComPtr<ID3D12Device> GetD3D12Device(WGPUDevice device);
+
+DAWN_NATIVE_EXPORT Microsoft::WRL::ComPtr<ID3D11On12Device> GetOrCreateD3D11On12Device(
+    WGPUDevice device);
+
+DAWN_NATIVE_EXPORT Microsoft::WRL::ComPtr<ID3D12CommandQueue> GetD3D12CommandQueue(
+    WGPUDevice device);
+
 DAWN_NATIVE_EXPORT uint64_t SetExternalMemoryReservation(WGPUDevice device,
                                                          uint64_t requestedReservationSize,
                                                          MemorySegment memorySegment);
 
-struct DAWN_NATIVE_EXPORT PhysicalDeviceDiscoveryOptions
-    : public d3d::PhysicalDeviceDiscoveryOptions {
-    PhysicalDeviceDiscoveryOptions();
-    explicit PhysicalDeviceDiscoveryOptions(Microsoft::WRL::ComPtr<IDXGIAdapter> adapter);
+// May be chained on SharedBufferMemoryDescriptor
+struct DAWN_NATIVE_EXPORT SharedBufferMemoryD3D12ResourceDescriptor : wgpu::ChainedStruct {
+    SharedBufferMemoryD3D12ResourceDescriptor() {
+        sType = static_cast<wgpu::SType>(WGPUSType_SharedBufferMemoryD3D12ResourceDescriptor);
+    }
+
+    // This ID3D12Resource object must be created from the same ID3D12Device used in the
+    // WGPUDevice.
+    Microsoft::WRL::ComPtr<ID3D12Resource> resource;
 };
 
-// TODO(dawn:1774): Deprecated.
-using AdapterDiscoveryOptions = PhysicalDeviceDiscoveryOptions;
+// May be chained on SharedTextureMemoryDescriptor.
+struct DAWN_NATIVE_EXPORT SharedTextureMemoryD3D12ResourceDescriptor : wgpu::ChainedStruct {
+    SharedTextureMemoryD3D12ResourceDescriptor() {
+        sType = static_cast<wgpu::SType>(WGPUSType_SharedTextureMemoryD3D12ResourceDescriptor);
+    }
+
+    // This ID3D12Resource object must be created from the same ID3D12Device used in the
+    // WGPUDevice.
+    Microsoft::WRL::ComPtr<ID3D12Resource> resource;
+};
 
 }  // namespace dawn::native::d3d12
 

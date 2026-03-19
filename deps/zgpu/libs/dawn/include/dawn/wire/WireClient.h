@@ -1,21 +1,35 @@
-// Copyright 2019 The Dawn Authors
+// Copyright 2019 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef INCLUDE_DAWN_WIRE_WIRECLIENT_H_
 #define INCLUDE_DAWN_WIRE_WIRECLIENT_H_
 
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include "dawn/dawn_proc_table.h"
@@ -30,32 +44,27 @@ class MemoryTransferService;
 DAWN_WIRE_EXPORT const DawnProcTable& GetProcs();
 }  // namespace client
 
+struct ReservedBuffer {
+    WGPUBuffer buffer;
+    Handle handle;
+    Handle deviceHandle;
+};
+
 struct ReservedTexture {
     WGPUTexture texture;
-    uint32_t id;
-    uint32_t generation;
-    uint32_t deviceId;
-    uint32_t deviceGeneration;
+    Handle handle;
+    Handle deviceHandle;
 };
 
-struct ReservedSwapChain {
-    WGPUSwapChain swapchain;
-    uint32_t id;
-    uint32_t generation;
-    uint32_t deviceId;
-    uint32_t deviceGeneration;
-};
-
-struct ReservedDevice {
-    WGPUDevice device;
-    uint32_t id;
-    uint32_t generation;
+struct ReservedSurface {
+    WGPUSurface surface;
+    Handle instanceHandle;
+    Handle handle;
 };
 
 struct ReservedInstance {
     WGPUInstance instance;
-    uint32_t id;
-    uint32_t generation;
+    Handle handle;
 };
 
 struct DAWN_WIRE_EXPORT WireClientDescriptor {
@@ -70,16 +79,18 @@ class DAWN_WIRE_EXPORT WireClient : public CommandHandler {
 
     const volatile char* HandleCommands(const volatile char* commands, size_t size) override;
 
+    ReservedBuffer ReserveBuffer(WGPUDevice device, const WGPUBufferDescriptor* descriptor);
     ReservedTexture ReserveTexture(WGPUDevice device, const WGPUTextureDescriptor* descriptor);
-    ReservedSwapChain ReserveSwapChain(WGPUDevice device,
-                                       const WGPUSwapChainDescriptor* descriptor);
-    ReservedDevice ReserveDevice();
-    ReservedInstance ReserveInstance();
+    ReservedSurface ReserveSurface(WGPUInstance instance,
+                                   const WGPUSurfaceCapabilities* capabilities);
+    ReservedInstance ReserveInstance(const WGPUInstanceDescriptor* descriptor = nullptr);
 
+    void ReclaimBufferReservation(const ReservedBuffer& reservation);
     void ReclaimTextureReservation(const ReservedTexture& reservation);
-    void ReclaimSwapChainReservation(const ReservedSwapChain& reservation);
-    void ReclaimDeviceReservation(const ReservedDevice& reservation);
+    void ReclaimSurfaceReservation(const ReservedSurface& reservation);
     void ReclaimInstanceReservation(const ReservedInstance& reservation);
+
+    Handle GetWireHandle(WGPUDevice device) const;
 
     // Disconnects the client.
     // Commands allocated after this point will not be sent.
@@ -115,11 +126,14 @@ class DAWN_WIRE_EXPORT MemoryTransferService {
         virtual size_t SerializeCreateSize() = 0;
 
         // Serialize the handle into |serializePointer| so it can be received by the server.
+        // TODO(https://issues.chromium.org/492456046): Pass as a span with the size from
+        // SerializeCreateSize.
         virtual void SerializeCreate(void* serializePointer) = 0;
 
         // Simply return the base address of the allocation (without applying any offset)
         // Returns nullptr if the allocation failed.
         // The data must live at least until the ReadHandle is destructued
+        // TODO(https://issues.chromium.org/492456046): Return as a span.
         virtual const void* GetData() = 0;
 
         // Gets called when a MapReadCallback resolves.
@@ -127,6 +141,9 @@ class DAWN_WIRE_EXPORT MemoryTransferService {
         // it to the range (offset, offset + size) of allocation
         // There could be nothing to be deserialized (if using shared memory)
         // Needs to check potential offset/size OOB and overflow
+        // TODO(https://issues.chromium.org/492456046): Pass deserializePointer+deserializeSize as a
+        // span, and the region to update as a span as well. It also seems that `size` is redundant
+        // with deserializeSize?
         virtual bool DeserializeDataUpdate(const void* deserializePointer,
                                            size_t deserializeSize,
                                            size_t offset,
@@ -146,12 +163,15 @@ class DAWN_WIRE_EXPORT MemoryTransferService {
         virtual size_t SerializeCreateSize() = 0;
 
         // Serialize the handle into |serializePointer| so it can be received by the server.
+        // TODO(https://issues.chromium.org/492456046): Pass as a span with the size from
+        // SerializeCreateSize.
         virtual void SerializeCreate(void* serializePointer) = 0;
 
         // Simply return the base address of the allocation (without applying any offset)
         // The data returned should be zero-initialized.
         // The data returned must live at least until the WriteHandle is destructed.
         // On failure, the pointer returned should be null.
+        // TODO(https://issues.chromium.org/492456046): Return as a span.
         virtual void* GetData() = 0;
 
         // Get the required serialization size for SerializeDataUpdate
@@ -161,6 +181,7 @@ class DAWN_WIRE_EXPORT MemoryTransferService {
         // the subrange (offset, offset + size) of the allocation at buffer unmap
         // This subrange is always the whole mapped region for now
         // There could be nothing to be serialized (if using shared memory)
+        // TODO(https://issues.chromium.org/492456046): Pass serializePointer as a span.
         virtual void SerializeDataUpdate(void* serializePointer, size_t offset, size_t size) = 0;
 
       private:
@@ -174,7 +195,7 @@ class DAWN_WIRE_EXPORT MemoryTransferService {
 };
 
 // Backdoor to get the order of the ProcMap for testing
-DAWN_WIRE_EXPORT std::vector<const char*> GetProcMapNamesForTesting();
+DAWN_WIRE_EXPORT std::vector<std::string_view> GetProcMapNamesForTesting();
 }  // namespace client
 }  // namespace dawn::wire
 

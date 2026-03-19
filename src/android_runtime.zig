@@ -1,7 +1,11 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const quickjs = @import("quickjs");
 const Value = quickjs.Value;
-const zgpu = @import("zgpu");
+const dawn = @import("dawn/context.zig");
+
+const is_android = builtin.os.tag == .linux and builtin.abi == .android;
+const android_c = if (is_android) @cImport(@cInclude("android/log.h")) else struct {};
 
 const JsEngine = @import("js_engine.zig").JsEngine;
 const bootstrap = @import("bootstrap.zig");
@@ -27,7 +31,7 @@ pub const AndroidRuntime = struct {
 
     pub fn init(
         allocator: std.mem.Allocator,
-        gctx: *zgpu.GraphicsContext,
+        gctx: *dawn.GraphicsContext,
         width: u32,
         height: u32,
     ) !*AndroidRuntime {
@@ -121,15 +125,15 @@ pub const AndroidRuntime = struct {
         const source_name_z = try self.allocator.dupeZ(u8, source_name);
         defer self.allocator.free(source_name_z);
 
-        log.info("evaluating '{s}'", .{source_name});
+        logcat("evalScript: evaluating");
         var result = self.engine.eval(js_source, source_name_z) catch |err| {
             clearPendingException(self.engine.context);
-            log.err("JS exception loading '{s}': {}", .{ source_name, err });
+            logcat("evalScript: JS exception during eval");
             return err;
         };
         result.deinit();
 
-        log.info("pumping microtasks until rAF registered", .{});
+        logcat("evalScript: pumping microtasks");
         self.event_loop.pumpUntilReady();
         self.gpu_bridge.presentIfNeeded();
     }
@@ -187,4 +191,10 @@ fn syncAnimationFrameGlobals(engine: *JsEngine) !void {
 fn clearPendingException(ctx: *quickjs.Context) void {
     const exc = ctx.getException();
     exc.deinit(ctx);
+}
+
+fn logcat(msg: [*:0]const u8) void {
+    if (is_android) {
+        _ = android_c.__android_log_write(android_c.ANDROID_LOG_INFO, "threez", msg);
+    }
 }

@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const zgpu = @import("zgpu");
+const dawn = @import("dawn/context.zig");
 const zglfw = @import("zglfw");
 
 const log = std.log.scoped(.window);
@@ -13,7 +13,7 @@ pub const WindowConfig = struct {
 
 pub const Window = struct {
     glfw_window: *zglfw.Window,
-    gctx: *zgpu.GraphicsContext,
+    gctx: *dawn.GraphicsContext,
     allocator: std.mem.Allocator,
 
     /// Create a GLFW window backed by a zgpu GraphicsContext (Dawn/WebGPU).
@@ -40,7 +40,7 @@ pub const Window = struct {
         errdefer zglfw.destroyWindow(glfw_window);
 
         // Build the WindowProvider that zgpu needs.
-        const window_provider = zgpu.WindowProvider{
+        const window_provider = dawn.WindowProvider{
             .window = @ptrCast(glfw_window),
             .fn_getTime = @ptrCast(&zglfw.getTime),
             .fn_getFramebufferSize = @ptrCast(&zglfw.Window.getFramebufferSize),
@@ -56,7 +56,7 @@ pub const Window = struct {
         // device, surface, and swapchain all in one call.
         log.info("GLFW window created {}x{}", .{ config.width, config.height });
 
-        const gctx = try zgpu.GraphicsContext.create(allocator, window_provider, .{});
+        const gctx = try dawn.GraphicsContext.create(allocator, window_provider, .{});
 
         // Ensure the window is visible and focused (WSLg/Wayland may not show by default)
         glfw_window.show();
@@ -117,19 +117,19 @@ pub const Window = struct {
 
     // --- Convenience accessors for the underlying GPU objects ---
 
-    pub fn getInstance(self: *const Window) zgpu.wgpu.Instance {
+    pub fn getInstance(self: *const Window) dawn.wgpu.Instance {
         return self.gctx.instance;
     }
 
-    pub fn getDevice(self: *const Window) zgpu.wgpu.Device {
+    pub fn getDevice(self: *const Window) dawn.wgpu.Device {
         return self.gctx.device;
     }
 
-    pub fn getQueue(self: *const Window) zgpu.wgpu.Queue {
+    pub fn getQueue(self: *const Window) dawn.wgpu.Queue {
         return self.gctx.queue;
     }
 
-    pub fn getSurface(self: *const Window) zgpu.wgpu.Surface {
+    pub fn getSurface(self: *const Window) dawn.wgpu.Surface {
         return self.gctx.surface;
     }
 };

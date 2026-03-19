@@ -5,6 +5,16 @@ const Context = quickjs.Context;
 const c = quickjs.c;
 const zignal = @import("zignal");
 
+var g_temp_dir: ?[]u8 = null;
+var g_decode_counter: std.atomic.Value(u64) = .init(0);
+
+pub fn setTempDir(path: []const u8) !void {
+    if (g_temp_dir) |old| {
+        std.heap.page_allocator.free(old);
+    }
+    g_temp_dir = try std.heap.page_allocator.dupe(u8, path);
+}
+
 /// Registers the native image decode function on globalThis.
 ///
 /// - `__native_decodeImage(data: Uint8Array) → { width, height, data: Uint8Array } | null`
@@ -92,21 +102,23 @@ fn decodeJpeg(ctx: *Context, data: []const u8) ?Value {
     const Rgba = zignal.Rgba;
     const allocator = std.heap.page_allocator;
 
-    // Write data to a temp file
-    var tmp_dir = std.testing.tmpDir(.{});
-    defer tmp_dir.cleanup();
+    // zignal's JPEG path is file-based, so write to a unique temporary file.
+    // A fixed filename races when multiple textures decode concurrently.
+    const decode_id = g_decode_counter.fetchAdd(1, .monotonic);
+    const temp_dir = g_temp_dir orelse "/tmp";
+    const tmp_path = std.fmt.allocPrint(allocator, "{s}/threez_decode_{d}.jpg", .{ temp_dir, decode_id }) catch return null;
+    defer allocator.free(tmp_path);
 
-    tmp_dir.dir.writeFile(.{
-        .sub_path = "decode.jpg",
-        .data = data,
-    }) catch return null;
-
-    // Get absolute path to the temp file
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const abs_path = tmp_dir.dir.realpath("decode.jpg", &path_buf) catch return null;
+    const tmp_file = std.fs.createFileAbsolute(tmp_path, .{}) catch return null;
+    tmp_file.writeAll(data) catch {
+        tmp_file.close();
+        return null;
+    };
+    tmp_file.close();
+    defer std.fs.deleteFileAbsolute(tmp_path) catch {};
 
     // Load as Image(Rgba) via zignal's file-based JPEG loader
-    var img = zignal.Image(Rgba).load(allocator, abs_path) catch return null;
+    var img = zignal.Image(Rgba).load(allocator, tmp_path) catch return null;
     defer img.deinit(allocator);
 
     return buildResultObject(ctx, img.cols, img.rows, img.asBytes());

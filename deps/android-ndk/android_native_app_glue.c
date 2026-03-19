@@ -258,6 +258,7 @@ static struct android_app* android_app_create(ANativeActivity* activity,
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_attr_setstacksize(&attr, 8 * 1024 * 1024); // 8 MiB for deep JS call stacks
     pthread_create(&android_app->thread, &attr, android_app_entry, android_app);
 
     // Wait for thread to start.

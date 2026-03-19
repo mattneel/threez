@@ -177,21 +177,35 @@ pub const GraphicsContext = struct {
         };
         errdefer adapter.release();
 
-        var properties: wgpu.AdapterProperties = undefined;
-        properties.next_in_chain = null;
-        adapter.getProperties(&properties);
+        const empty = wgpu.StringView{ .data = null, .length = 0 };
+        var info = wgpu.AdapterInfo{
+            .vendor = empty,
+            .architecture = empty,
+            .device = empty,
+            .description = empty,
+            .backend_type = .undef,
+            .adapter_type = .unknown,
+            .vendor_id = 0,
+            .device_id = 0,
+            .subgroup_min_size = 0,
+            .subgroup_max_size = 0,
+        };
+        _ = adapter.getInfo(&info);
 
         if (emscripten) {
-            properties.name = "emscripten";
-            properties.driver_description = "emscripten";
-            properties.adapter_type = .unknown;
-            properties.backend_type = .undef;
+            info.device = .{ .data = "emscripten".ptr, .length = "emscripten".len };
+            info.description = .{ .data = "emscripten".ptr, .length = "emscripten".len };
+            info.adapter_type = .unknown;
+            info.backend_type = .undef;
         }
+
+        const device_name = if (info.device.data) |ptr| ptr[0..info.device.length] else "";
+        const driver_description = if (info.description.data) |ptr| ptr[0..info.description.length] else "";
         std.log.info("[zgpu] High-performance device has been selected:", .{});
-        std.log.info("[zgpu]   Name: {s}", .{properties.name});
-        std.log.info("[zgpu]   Driver: {s}", .{properties.driver_description});
-        std.log.info("[zgpu]   Adapter type: {s}", .{@tagName(properties.adapter_type)});
-        std.log.info("[zgpu]   Backend type: {s}", .{@tagName(properties.backend_type)});
+        std.log.info("[zgpu]   Name: {s}", .{device_name});
+        std.log.info("[zgpu]   Driver: {s}", .{driver_description});
+        std.log.info("[zgpu]   Adapter type: {s}", .{@tagName(info.adapter_type)});
+        std.log.info("[zgpu]   Backend type: {s}", .{@tagName(info.backend_type)});
 
         const device = device: {
             const Response = struct {

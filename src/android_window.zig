@@ -1,5 +1,5 @@
 const std = @import("std");
-const zgpu = @import("zgpu");
+const dawn = @import("dawn/context.zig");
 const android_app_mod = @import("android_app.zig");
 const c = android_app_mod.c;
 
@@ -11,7 +11,7 @@ var g_width: u32 = 0;
 var g_height: u32 = 0;
 
 pub const AndroidWindow = struct {
-    gctx: *zgpu.GraphicsContext,
+    gctx: *dawn.GraphicsContext,
     allocator: std.mem.Allocator,
     native_window: *c.ANativeWindow,
 
@@ -21,7 +21,7 @@ pub const AndroidWindow = struct {
         g_width = width;
         g_height = height;
 
-        const window_provider = zgpu.WindowProvider{
+        const window_provider = dawn.WindowProvider{
             .window = @ptrCast(native_window),
             .fn_getTime = &getTime,
             .fn_getFramebufferSize = &getFramebufferSize,
@@ -29,7 +29,7 @@ pub const AndroidWindow = struct {
         };
 
         log.info("creating GraphicsContext for ANativeWindow {}x{}", .{ width, height });
-        const gctx = try zgpu.GraphicsContext.create(allocator, window_provider, .{});
+        const gctx = try dawn.GraphicsContext.create(allocator, window_provider, .{});
 
         return .{
             .gctx = gctx,
