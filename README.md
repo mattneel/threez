@@ -14,12 +14,14 @@ still `threez` while the public project name moves to `three.zig`.
 
 - Native desktop windowing on Linux and Windows.
 - Android APK builds using `NativeActivity`.
-- Source-built Dawn/Tint for native targets.
+- Source-built Dawn/Tint for native targets (unified across all platforms).
 - QuickJS-NG JavaScript execution with a browser-like runtime surface.
 - Three.js `WebGPURenderer` enough to run the glTF viewer example.
 - Built-in top-right FPS overlay for runtime smoke testing.
 - Local, `blob:`, `data:`, and basic HTTP fetch paths.
 - Image loading and `createImageBitmap` paths used by the included examples.
+
+See [docs/STATUS.md](docs/STATUS.md) for detailed project status and architecture.
 
 Known limits:
 
@@ -220,9 +222,12 @@ All smoke tests use the same glTF viewer bundle (DamagedHelmet) to verify the ru
 
 ## Contributor Notes
 
-The active native renderer path is source-built Dawn through `build.zig`.
-The pinned Dawn revision lives in `build.zig`, and build outputs are cached
-under `.zig-cache/dawn/`.
+The active native renderer path is source-built Dawn/Tint through `build.zig`.
+The pinned Dawn revision (commit 03e999815027) lives in `build.zig`, and build
+outputs are cached under `.zig-cache/dawn/`. This unified build path works across
+Linux, Windows, and Android.
+
+See [docs/STATUS.md](docs/STATUS.md) for detailed architecture and migration notes.
 
 High-level layout:
 
