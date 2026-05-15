@@ -1,6 +1,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const raw = @import("raw.zig");
+
+// Import zgpu only for WebGPU type definitions.
+// The actual WebGPU implementation uses source-built Dawn, not zgpu's prebuilt binaries.
 const zgpu = @import("zgpu");
 
 pub const wgpu = zgpu.wgpu;

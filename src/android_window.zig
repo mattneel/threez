@@ -5,7 +5,7 @@ const c = android_app_mod.c;
 
 const log = std.log.scoped(.android_window);
 
-/// File-scoped state for zgpu WindowProvider callbacks (which take no context arg).
+/// File-scoped state for Dawn WindowProvider callbacks (which take no context arg).
 var g_native_window: ?*c.ANativeWindow = null;
 var g_width: u32 = 0;
 var g_height: u32 = 0;

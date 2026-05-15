@@ -16,7 +16,7 @@ pub const Window = struct {
     gctx: *dawn.GraphicsContext,
     allocator: std.mem.Allocator,
 
-    /// Create a GLFW window backed by a zgpu GraphicsContext (Dawn/WebGPU).
+    /// Create a GLFW window backed by a Dawn GraphicsContext (source-built).
     /// The GraphicsContext owns the GPU instance, device, surface, and swapchain.
     pub fn init(allocator: std.mem.Allocator, config: WindowConfig) !Window {
         // Force X11 only on Linux (Wayland+Vulkan doesn't present on WSLg).
@@ -39,7 +39,7 @@ pub const Window = struct {
         );
         errdefer zglfw.destroyWindow(glfw_window);
 
-        // Build the WindowProvider that zgpu needs.
+        // Build the WindowProvider that Dawn needs.
         const window_provider = dawn.WindowProvider{
             .window = @ptrCast(glfw_window),
             .fn_getTime = @ptrCast(&zglfw.getTime),
@@ -52,7 +52,7 @@ pub const Window = struct {
             .fn_getWin32Window = @ptrCast(&zglfw.getWin32Window),
         };
 
-        // Create the zgpu GraphicsContext — this creates instance, adapter,
+        // Create the Dawn GraphicsContext — this creates instance, adapter,
         // device, surface, and swapchain all in one call.
         log.info("GLFW window created {}x{}", .{ config.width, config.height });
 

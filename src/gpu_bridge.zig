@@ -18,7 +18,7 @@ const descriptor = @import("descriptor.zig");
 const FpsOverlay = @import("fps_overlay.zig").FpsOverlay;
 
 /// The GPU bridge connects JavaScript WebGPU API calls to the pre-created
-/// Dawn adapter, device, and queue.
+/// Dawn adapter, device, and queue (source-built Dawn, not zgpu's prebuilt binaries).
 ///
 /// Since the native GraphicsContext creates everything at init time, the bridge
 /// simply wraps the existing GPU objects as handle IDs and returns them

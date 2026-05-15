@@ -122,7 +122,8 @@ pub fn build(b: *std.Build) void {
         exe.linkLibrary(dep.artifact("glfw"));
     }
 
-    // zgpu — WebGPU via Dawn
+    // zgpu — Windowing (GLFW) and WebGPU type definitions only.
+// Active WebGPU implementation uses source-built Dawn from build.zig.
     const zgpu_dep = b.dependency("zgpu", .{
         .target = target,
         .optimize = optimize,
