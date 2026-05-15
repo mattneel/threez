@@ -75,12 +75,15 @@ export ADB=/path/to/adb  # Optional: defaults to WSL path from handoff
 ```
 
 This will:
-1. Stage assets from the glTF viewer example
-2. Build the APK
-3. Install on connected device
-4. Launch the app
-5. Take a screenshot after 5 seconds
-6. Save screenshot to `/tmp/threezig-android-smoke.png`
+1. Build the APK (with automatic asset staging)
+2. Install on connected device
+3. Launch the app
+4. Take a screenshot after 5 seconds
+5. Save screenshot to `/tmp/threezig-android-smoke.png`
+
+**Note**: The build system automatically stages the glTF viewer example assets
+from `examples/gltf_viewer/` to `android-assets/` and bundles them into the APK.
+No manual asset staging is required for the default example.
 
 ### Step-by-Step Android Smoke
 ```bash

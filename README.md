@@ -190,24 +190,16 @@ Android builds an APK:
 export ANDROID_HOME=/path/to/android/sdk
 export ANDROID_NDK_HOME=/path/to/android/ndk
 
-zig build apk -Dtarget=aarch64-linux-android -Dassets=/absolute/path/to/assets
+zig build apk -Dtarget=aarch64-linux-android
 ```
 
 The current Android build expects SDK build-tools `35.0.0`, platform
 `android-35`, and an NDK with the Android CMake toolchain file. The APK output
 is installed to `zig-out/threez.apk`.
 
-The Android runtime loads `app.js` from the APK asset root. To package the glTF
-example:
-
-```sh
-rm -rf /tmp/threezig-apk-assets
-mkdir -p /tmp/threezig-apk-assets/assets
-cp examples/gltf_viewer/dist/gltf-bundle.js /tmp/threezig-apk-assets/app.js
-cp examples/gltf_viewer/assets/DamagedHelmet.glb /tmp/threezig-apk-assets/assets/
-
-zig build apk -Dtarget=aarch64-linux-android -Dassets=/tmp/threezig-apk-assets
-```
+**Automatic asset staging**: The build automatically stages the glTF viewer example
+assets to `android-assets/` and bundles them into the APK. No manual asset staging
+is required for the default example. For custom assets, use `-Dassets=/path/to/assets`.
 
 ## Smoke Testing
 

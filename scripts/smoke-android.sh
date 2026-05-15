@@ -18,7 +18,7 @@ ANDROID_HOME="${ANDROID_HOME:-/home/autark/android/sdk}"
 ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-/home/autark/android/android-ndk-r27c}"
 ADB="${ADB:-/mnt/c/Users/requi/Downloads/platform-tools/adb.exe}"
 PKG="com.threez.gltfviewer"
-ASSETS_DIR="/tmp/threezig-apk-assets"
+# Assets are now automatically staged by the build system to android-assets/
 
 # Colors for output
 RED='\033[0;31m'
@@ -58,22 +58,12 @@ check_deps() {
     fi
 }
 
-# Stage assets for APK
-stage_assets() {
-    log_info "Staging assets for Android APK..."
-    rm -rf "$ASSETS_DIR"
-    mkdir -p "$ASSETS_DIR/assets"
-    cp examples/gltf_viewer/dist/gltf-bundle.js "$ASSETS_DIR/app.js"
-    cp examples/gltf_viewer/assets/DamagedHelmet.glb "$ASSETS_DIR/assets/"
-    log_info "Assets staged to $ASSETS_DIR"
-}
-
 # Build APK
 build_apk() {
     log_info "Building Android APK..."
     ANDROID_HOME="$ANDROID_HOME" \
     ANDROID_NDK_HOME="$ANDROID_NDK_HOME" \
-    zig build apk -Dtarget=aarch64-linux-android -Dassets="$ASSETS_DIR"
+    zig build apk -Dtarget=aarch64-linux-android
     log_info "APK built successfully: zig-out/threez.apk"
 }
 
@@ -156,7 +146,6 @@ COMMAND="${1:-install}"
 case "$COMMAND" in
     install)
         check_deps
-        stage_assets
         build_apk
         install_apk
         log_info "✓ Android smoke install complete"
@@ -178,7 +167,6 @@ case "$COMMAND" in
         ;;
     full)
         check_deps
-        stage_assets
         build_apk
         install_apk
         launch_app

@@ -10,6 +10,7 @@ build-tools/
 platforms/
 licenses/
 debug.keystore
+android-assets/
 # Large Android Dawn static libs — fetch separately
 deps/dawn-aarch64-linux-android/libdawn.a
 deps/dawn-x86_64-linux-android/libdawn.a

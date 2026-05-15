@@ -205,7 +205,32 @@ pub fn build(b: *std.Build) void {
         aapt2_link.addArgs(&.{ "--min-sdk-version", "26", "--target-sdk-version", "33" });
 
         // Optional assets directory to bundle into the APK
-        const assets_dir = b.option([]const u8, "assets", "Directory of assets to bundle in APK");
+        // If not provided, use default example assets
+        const user_assets_dir = b.option([]const u8, "assets", "Directory of assets to bundle in APK");
+
+        // Asset staging step (created conditionally)
+        var stage_step: ?*std.Build.Step = null;
+
+        // Create default asset staging directory if no custom assets provided
+        const assets_dir = if (user_assets_dir) |dir| dir else blk: {
+            const default_assets_dir = b.path("android-assets");
+            const stage_assets = b.addRunArtifact(b.addExecutable(.{
+                .name = "stage-android-assets",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("build/stage_android_assets.zig"),
+                    .target = b.graph.host,
+                    .optimize = .ReleaseSafe,
+                }),
+            }));
+            stage_assets.addArg(default_assets_dir.getPath(b));
+            stage_assets.addArg(b.path("examples/gltf_viewer/dist/gltf-bundle.js").getPath(b));
+            stage_assets.addArg(b.path("examples/gltf_viewer/assets").getPath(b));
+
+            stage_step = b.step("stage-android-assets", "Stage default Android assets");
+            stage_step.?.dependOn(&stage_assets.step);
+
+            break :blk default_assets_dir.getPath(b);
+        };
 
         // Step 2: assemble APK (inject .so, assets, zipalign, sign)
         const assemble = b.addSystemCommand(&.{"/bin/sh", "-c"});
@@ -229,13 +254,18 @@ pub fn build(b: *std.Build) void {
         assemble.addFileArg(so_path);
         assemble.addFileArg(b.path("debug.keystore"));
         const signed_apk = assemble.addOutputFileArg("threez.apk");
-        assemble.addArg(assets_dir orelse "");
+        assemble.addArg(assets_dir);
         assemble.step.dependOn(&aapt2_link.step);
 
         const install_apk = b.addInstallFile(signed_apk, "threez.apk");
 
         const apk_step = b.step("apk", "Build signed Android APK");
         apk_step.dependOn(&install_apk.step);
+
+        // Make APK step depend on asset staging when using default assets
+        if (stage_step) |step| {
+            apk_step.dependOn(step);
+        }
 
         const adb_install = b.addSystemCommand(&.{ "adb", "install", "-r" });
         adb_install.addFileArg(signed_apk);
