@@ -17,6 +17,7 @@ still `threez` while the public project name moves to `three.zig`.
 - Source-built Dawn/Tint for native targets.
 - QuickJS-NG JavaScript execution with a browser-like runtime surface.
 - Three.js `WebGPURenderer` enough to run the glTF viewer example.
+- Built-in top-right FPS overlay for runtime smoke testing.
 - Local, `blob:`, `data:`, and basic HTTP fetch paths.
 - Image loading and `createImageBitmap` paths used by the included examples.
 

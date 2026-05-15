@@ -15,6 +15,7 @@ const HandleTable = handle_table.HandleTable;
 const HandleId = handle_table.HandleId;
 const DawnHandle = handle_table.DawnHandle;
 const descriptor = @import("descriptor.zig");
+const FpsOverlay = @import("fps_overlay.zig").FpsOverlay;
 
 /// The GPU bridge connects JavaScript WebGPU API calls to the pre-created
 /// Dawn adapter, device, and queue.
@@ -33,6 +34,7 @@ pub const GpuBridge = struct {
     /// handle after present. GraphicsContext owns the actual Dawn view
     /// lifetime.
     prev_swapchain_view: ?HandleId = null,
+    fps_overlay: FpsOverlay = .{},
 
     /// Initialize the bridge by allocating handle table entries for the
     /// pre-existing adapter, device, and queue from the native GraphicsContext.
@@ -67,6 +69,7 @@ pub const GpuBridge = struct {
         if (self.frame_texture_acquired) {
             self.frame_texture_acquired = false;
             if (self.gctx) |gctx| {
+                self.fps_overlay.draw(gctx);
                 _ = gctx.present();
             }
             if (self.prev_swapchain_view) |prev_id| {
@@ -82,6 +85,7 @@ pub const GpuBridge = struct {
             self.handle_table_ptr.free(prev_id) catch {};
             self.prev_swapchain_view = null;
         }
+        self.fps_overlay.deinit();
         self.handle_table_ptr.free(self.queue_id) catch {};
         self.handle_table_ptr.free(self.device_id) catch {};
         self.handle_table_ptr.free(self.adapter_id) catch {};
