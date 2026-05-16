@@ -122,6 +122,10 @@ pub const GraphicsContext = struct {
         const device: wgpu.Device = @ptrCast(raw_device);
         errdefer device.release();
 
+        // Suppress Dawn's verbose C-level logging (Vulkan warnings, etc.)
+        // which would otherwise pollute stderr during zig build test.
+        device.setLoggingCallback(suppressLogging, null);
+
         const queue = device.getQueue();
         const framebuffer_size = window_provider.getFramebufferSize();
         var surface_caps = std.mem.zeroes(raw.c.WGPUSurfaceCapabilities);
@@ -491,6 +495,18 @@ fn logUnhandledError(
         raw.c.WGPUErrorType_Internal => log.err("Internal error: {s}", .{msg}),
         else => log.err("GPU error {d}: {s}", .{ err_type, msg }),
     }
+}
+
+/// No-op logging callback to suppress Dawn's C-level stderr output
+/// (Vulkan adapter warnings, surface diagnostics, etc.) during tests.
+fn suppressLogging(
+    log_type: wgpu.LoggingType,
+    message: ?[*:0]const u8,
+    userdata: ?*anyopaque,
+) callconv(.c) void {
+    _ = log_type;
+    _ = message;
+    _ = userdata;
 }
 
 const objc = struct {

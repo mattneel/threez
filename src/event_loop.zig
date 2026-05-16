@@ -235,13 +235,16 @@ pub const EventLoop = struct {
             const result = entry.callback.call(ctx, global_this, &.{ts_val});
             if (result.isException()) {
                 const exc = ctx.getException();
-                if (exc.toCString(ctx)) |msg| {
-                    if (builtin.is_test) {
-                        log.warn("rAF callback exception: {s}", .{std.mem.span(msg)});
-                    } else {
+                if (builtin.is_test) {
+                    // Tests verify exception handling via assertions;
+                    // don't log the exception message to avoid polluting
+                    // stderr during zig build test.
+                    _ = exc.toCString(ctx);
+                } else {
+                    if (exc.toCString(ctx)) |msg| {
                         log.err("rAF callback exception: {s}", .{std.mem.span(msg)});
+                        ctx.freeCString(msg);
                     }
-                    ctx.freeCString(msg);
                 }
                 exc.deinit(ctx);
                 result.deinit(ctx);

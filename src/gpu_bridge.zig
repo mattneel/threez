@@ -561,6 +561,56 @@ pub const GpuBridge = struct {
         );
         native_obj.setPropertyStr(ctx, "gpuRenderPassSetScissorRect", rp_set_scissor_fn) catch return error.JSError;
 
+        // gpuRenderPassSetBlendConstant(passId, color) → undefined
+        const rp_set_blend_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassSetBlendConstantNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassSetBlendConstant", rp_set_blend_fn) catch return error.JSError;
+
+        // gpuRenderPassSetStencilReference(passId, reference) → undefined
+        const rp_set_stencil_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassSetStencilReferenceNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassSetStencilReference", rp_set_stencil_fn) catch return error.JSError;
+
+        // gpuRenderPassPushDebugGroup(passId, groupLabel) → undefined
+        const rp_push_dbg_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassPushDebugGroupNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassPushDebugGroup", rp_push_dbg_fn) catch return error.JSError;
+
+        // gpuRenderPassPopDebugGroup(passId) → undefined
+        const rp_pop_dbg_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassPopDebugGroupNative,
+            1,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassPopDebugGroup", rp_pop_dbg_fn) catch return error.JSError;
+
+        // gpuRenderPassInsertDebugMarker(passId, markerLabel) → undefined
+        const rp_marker_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassInsertDebugMarkerNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassInsertDebugMarker", rp_marker_fn) catch return error.JSError;
+
         // gpuCommandEncoderFinish(encoderId) → command buffer handle ID
         const ce_finish_fn = Value.initCFunctionData(
             ctx,
@@ -2687,6 +2737,157 @@ fn gpuRenderPassSetScissorRectNative(
     return Value.undefined;
 }
 
+/// __native.gpuRenderPassSetBlendConstant(passId, color) → undefined
+///
+/// Sets the constant blend color used by "constant" blend factors.
+/// color is a JS object { r, g, b, a } with f64 values.
+fn gpuRenderPassSetBlendConstantNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.RenderPassEncoder = pass_entry.handle.as(wgpu.RenderPassEncoder) orelse return Value.undefined;
+
+    const color_val: Value = @bitCast(argv[1]);
+    if (!color_val.isObject()) return Value.undefined;
+
+    const r_val = color_val.getPropertyStr(context, "r");
+    defer r_val.deinit(context);
+    const g_val = color_val.getPropertyStr(context, "g");
+    defer g_val.deinit(context);
+    const b_val = color_val.getPropertyStr(context, "b");
+    defer b_val.deinit(context);
+    const a_val = color_val.getPropertyStr(context, "a");
+    defer a_val.deinit(context);
+
+    const color = wgpu.Color{
+        .r = r_val.toFloat64(context) catch 0,
+        .g = g_val.toFloat64(context) catch 0,
+        .b = b_val.toFloat64(context) catch 0,
+        .a = a_val.toFloat64(context) catch 1,
+    };
+
+    pass.setBlendConstant(color);
+    return Value.undefined;
+}
+
+/// __native.gpuRenderPassSetStencilReference(passId, reference) → undefined
+///
+/// Sets the stencil reference value for stencil testing.
+fn gpuRenderPassSetStencilReferenceNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.RenderPassEncoder = pass_entry.handle.as(wgpu.RenderPassEncoder) orelse return Value.undefined;
+
+    const ref_val: Value = @bitCast(argv[1]);
+    const ref: u32 = @intFromFloat(ref_val.toFloat64(context) catch return Value.undefined);
+
+    pass.setStencilReference(ref);
+    return Value.undefined;
+}
+
+/// __native.gpuRenderPassPushDebugGroup(passId, groupLabel) → undefined
+///
+/// Pushes a debug group onto the render pass, visible in GPU debuggers.
+fn gpuRenderPassPushDebugGroupNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.RenderPassEncoder = pass_entry.handle.as(wgpu.RenderPassEncoder) orelse return Value.undefined;
+
+    const label_val: Value = @bitCast(argv[1]);
+    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    defer context.freeCString(label_ptr);
+
+    pass.pushDebugGroup(label_ptr);
+    return Value.undefined;
+}
+
+/// __native.gpuRenderPassPopDebugGroup(passId) → undefined
+///
+/// Pops the active debug group from the render pass.
+fn gpuRenderPassPopDebugGroupNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 1) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.RenderPassEncoder = pass_entry.handle.as(wgpu.RenderPassEncoder) orelse return Value.undefined;
+
+    pass.popDebugGroup();
+    return Value.undefined;
+}
+
+/// __native.gpuRenderPassInsertDebugMarker(passId, markerLabel) → undefined
+///
+/// Inserts a debug marker into the render pass, visible in GPU debuggers.
+fn gpuRenderPassInsertDebugMarkerNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.RenderPassEncoder = pass_entry.handle.as(wgpu.RenderPassEncoder) orelse return Value.undefined;
+
+    const label_val: Value = @bitCast(argv[1]);
+    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    defer context.freeCString(label_ptr);
+
+    pass.insertDebugMarker(label_ptr);
+    return Value.undefined;
+}
+
 /// __native.gpuCommandEncoderFinish(encoderId) → number (command buffer handle ID)
 fn gpuCommandEncoderFinishNative(
     ctx: ?*Context,
@@ -4313,6 +4514,11 @@ test "register creates command encoding functions on __native" {
         \\typeof __native.gpuRenderPassDraw === 'function' &&
         \\typeof __native.gpuRenderPassDrawIndexed === 'function' &&
         \\typeof __native.gpuRenderPassEnd === 'function' &&
+        \\typeof __native.gpuRenderPassSetBlendConstant === 'function' &&
+        \\typeof __native.gpuRenderPassSetStencilReference === 'function' &&
+        \\typeof __native.gpuRenderPassPushDebugGroup === 'function' &&
+        \\typeof __native.gpuRenderPassPopDebugGroup === 'function' &&
+        \\typeof __native.gpuRenderPassInsertDebugMarker === 'function' &&
         \\typeof __native.gpuCommandEncoderFinish === 'function' &&
         \\typeof __native.gpuQueueSubmit === 'function'
     , "<test>");
@@ -4873,6 +5079,234 @@ test "gpuComputePassEncoderEnd with real hardware" {
         \\  var passId = __native.gpuCommandEncoderBeginComputePass(encId);
         \\  var result = __native.gpuComputePassEncoderEnd(passId);
         \\  return result === undefined;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6: GPURenderPassEncoder missing functions — hardware tests
+// ---------------------------------------------------------------------------
+
+test "gpuRenderPassEncoder.setBlendConstant with real hardware" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    const context_result = try createTestGpuContext(testing.allocator);
+    const gctx = context_result[0];
+    const glfw_window = context_result[1];
+    defer destroyTestGpuContext(gctx, glfw_window, testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht, gctx);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var queueId = __native.gpuGetQueue(devId);
+        \\  __native.gpuConfigureContext(devId, 'bgra8unorm', 'opaque', 640, 480);
+        \\  var texId = __native.gpuGetCurrentTexture();
+        \\  var viewId = __native.gpuCreateTextureView(texId, {});
+        \\  var encId = __native.gpuCreateCommandEncoder(devId);
+        \\  var passId = __native.gpuCommandEncoderBeginRenderPass(encId, {
+        \\    colorAttachments: [{ view: viewId, loadOp: 'clear', storeOp: 'store' }]
+        \\  });
+        \\  var result = __native.gpuRenderPassSetBlendConstant(passId, { r: 0.1, g: 0.2, b: 0.3, a: 0.4 });
+        \\  if (result !== undefined) return 'expected undefined, got ' + typeof result;
+        \\  __native.gpuRenderPassEnd(passId);
+        \\  var cmdBuf = __native.gpuCommandEncoderFinish(encId);
+        \\  __native.gpuQueueSubmit(queueId, [cmdBuf]);
+        \\  __native.gpuPresent();
+        \\  return true;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuRenderPassEncoder.setStencilReference with real hardware" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    const context_result = try createTestGpuContext(testing.allocator);
+    const gctx = context_result[0];
+    const glfw_window = context_result[1];
+    defer destroyTestGpuContext(gctx, glfw_window, testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht, gctx);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var queueId = __native.gpuGetQueue(devId);
+        \\  __native.gpuConfigureContext(devId, 'bgra8unorm', 'opaque', 640, 480);
+        \\  var texId = __native.gpuGetCurrentTexture();
+        \\  var viewId = __native.gpuCreateTextureView(texId, {});
+        \\  var encId = __native.gpuCreateCommandEncoder(devId);
+        \\  var passId = __native.gpuCommandEncoderBeginRenderPass(encId, {
+        \\    colorAttachments: [{ view: viewId, loadOp: 'clear', storeOp: 'store' }]
+        \\  });
+        \\  var result = __native.gpuRenderPassSetStencilReference(passId, 0x42);
+        \\  if (result !== undefined) return 'expected undefined, got ' + typeof result;
+        \\  __native.gpuRenderPassEnd(passId);
+        \\  var cmdBuf = __native.gpuCommandEncoderFinish(encId);
+        \\  __native.gpuQueueSubmit(queueId, [cmdBuf]);
+        \\  __native.gpuPresent();
+        \\  return true;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuRenderPassEncoder.pushDebugGroup and popDebugGroup with real hardware" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    const context_result = try createTestGpuContext(testing.allocator);
+    const gctx = context_result[0];
+    const glfw_window = context_result[1];
+    defer destroyTestGpuContext(gctx, glfw_window, testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht, gctx);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var queueId = __native.gpuGetQueue(devId);
+        \\  __native.gpuConfigureContext(devId, 'bgra8unorm', 'opaque', 640, 480);
+        \\  var texId = __native.gpuGetCurrentTexture();
+        \\  var viewId = __native.gpuCreateTextureView(texId, {});
+        \\  var encId = __native.gpuCreateCommandEncoder(devId);
+        \\  var passId = __native.gpuCommandEncoderBeginRenderPass(encId, {
+        \\    colorAttachments: [{ view: viewId, loadOp: 'clear', storeOp: 'store' }]
+        \\  });
+        \\  var pushResult = __native.gpuRenderPassPushDebugGroup(passId, 'my_debug_group');
+        \\  if (pushResult !== undefined) return 'push expected undefined, got ' + typeof pushResult;
+        \\  var popResult = __native.gpuRenderPassPopDebugGroup(passId);
+        \\  if (popResult !== undefined) return 'pop expected undefined, got ' + typeof popResult;
+        \\  __native.gpuRenderPassEnd(passId);
+        \\  var cmdBuf = __native.gpuCommandEncoderFinish(encId);
+        \\  __native.gpuQueueSubmit(queueId, [cmdBuf]);
+        \\  __native.gpuPresent();
+        \\  return true;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuRenderPassEncoder.insertDebugMarker with real hardware" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    const context_result = try createTestGpuContext(testing.allocator);
+    const gctx = context_result[0];
+    const glfw_window = context_result[1];
+    defer destroyTestGpuContext(gctx, glfw_window, testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht, gctx);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var queueId = __native.gpuGetQueue(devId);
+        \\  __native.gpuConfigureContext(devId, 'bgra8unorm', 'opaque', 640, 480);
+        \\  var texId = __native.gpuGetCurrentTexture();
+        \\  var viewId = __native.gpuCreateTextureView(texId, {});
+        \\  var encId = __native.gpuCreateCommandEncoder(devId);
+        \\  var passId = __native.gpuCommandEncoderBeginRenderPass(encId, {
+        \\    colorAttachments: [{ view: viewId, loadOp: 'clear', storeOp: 'store' }]
+        \\  });
+        \\  var result = __native.gpuRenderPassInsertDebugMarker(passId, 'marker_after_draw');
+        \\  if (result !== undefined) return 'expected undefined, got ' + typeof result;
+        \\  __native.gpuRenderPassEnd(passId);
+        \\  var cmdBuf = __native.gpuCommandEncoderFinish(encId);
+        \\  __native.gpuQueueSubmit(queueId, [cmdBuf]);
+        \\  __native.gpuPresent();
+        \\  return true;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuRenderPassEncoder.setBlendConstant parses all color channels correctly" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    const context_result = try createTestGpuContext(testing.allocator);
+    const gctx = context_result[0];
+    const glfw_window = context_result[1];
+    defer destroyTestGpuContext(gctx, glfw_window, testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht, gctx);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    // Test with various color values including edge cases (0.0, 1.0, >1.0, <0.0)
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var queueId = __native.gpuGetQueue(devId);
+        \\  __native.gpuConfigureContext(devId, 'bgra8unorm', 'opaque', 640, 480);
+        \\  var texId = __native.gpuGetCurrentTexture();
+        \\  var viewId = __native.gpuCreateTextureView(texId, {});
+        \\  var encId = __native.gpuCreateCommandEncoder(devId);
+        \\  var passId = __native.gpuCommandEncoderBeginRenderPass(encId, {
+        \\    colorAttachments: [{ view: viewId, loadOp: 'clear', storeOp: 'store' }]
+        \\  });
+        \\  // Test full white
+        \\  __native.gpuRenderPassSetBlendConstant(passId, { r: 1.0, g: 1.0, b: 1.0, a: 1.0 });
+        \\  // Test all zero
+        \\  __native.gpuRenderPassSetBlendConstant(passId, { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
+        \\  // Test half values
+        \\  __native.gpuRenderPassSetBlendConstant(passId, { r: 0.5, g: 0.5, b: 0.5, a: 0.5 });
+        \\  // Test >1.0 values (clamping is GPU's responsibility)
+        \\  __native.gpuRenderPassSetBlendConstant(passId, { r: 2.0, g: -0.5, b: 1.5, a: 3.0 });
+        \\  __native.gpuRenderPassEnd(passId);
+        \\  var cmdBuf = __native.gpuCommandEncoderFinish(encId);
+        \\  __native.gpuQueueSubmit(queueId, [cmdBuf]);
+        \\  __native.gpuPresent();
+        \\  return true;
         \\})()
     ;
     var result = try engine.eval(js_src, "<test>");
