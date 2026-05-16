@@ -411,6 +411,56 @@ pub const GpuBridge = struct {
         );
         native_obj.setPropertyStr(ctx, "gpuCreateCommandEncoder", create_ce_fn) catch return error.JSError;
 
+        // gpuCommandEncoderBeginComputePass(encoderId, descriptor?) → compute pass handle ID
+        const begin_cp_fn = Value.initCFunctionData(
+            ctx,
+            &gpuCommandEncoderBeginComputePassNative,
+            1,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuCommandEncoderBeginComputePass", begin_cp_fn) catch return error.JSError;
+
+        // gpuComputePassEncoderSetPipeline(passId, pipelineId) → undefined
+        const cp_set_pipeline_fn = Value.initCFunctionData(
+            ctx,
+            &gpuComputePassEncoderSetPipelineNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuComputePassEncoderSetPipeline", cp_set_pipeline_fn) catch return error.JSError;
+
+        // gpuComputePassEncoderSetBindGroup(passId, index, bindGroupId, offsets?) → undefined
+        const cp_set_bind_group_fn = Value.initCFunctionData(
+            ctx,
+            &gpuComputePassEncoderSetBindGroupNative,
+            3,
+            1,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuComputePassEncoderSetBindGroup", cp_set_bind_group_fn) catch return error.JSError;
+
+        // gpuComputePassEncoderDispatchWorkgroups(passId, x, y?, z?) → undefined
+        const cp_dispatch_fn = Value.initCFunctionData(
+            ctx,
+            &gpuComputePassEncoderDispatchWorkgroupsNative,
+            2,
+            2,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuComputePassEncoderDispatchWorkgroups", cp_dispatch_fn) catch return error.JSError;
+
+        // gpuComputePassEncoderEnd(passId) → undefined
+        const cp_end_fn = Value.initCFunctionData(
+            ctx,
+            &gpuComputePassEncoderEndNative,
+            1,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuComputePassEncoderEnd", cp_end_fn) catch return error.JSError;
+
         // gpuCommandEncoderBeginRenderPass(encoderId, descriptor) → render pass handle ID
         const begin_rp_fn = Value.initCFunctionData(
             ctx,
@@ -2406,6 +2456,158 @@ fn gpuRenderPassEndNative(
     const pass_id = f64ToHandle(pass_f64);
     const pass_entry = ht.get(pass_id) catch return Value.undefined;
     const pass: wgpu.RenderPassEncoder = pass_entry.handle.as(wgpu.RenderPassEncoder) orelse {
+        ht.free(pass_id) catch {};
+        return Value.undefined;
+    };
+
+    pass.end();
+    pass.release();
+    ht.free(pass_id) catch {};
+
+    return Value.undefined;
+}
+
+/// __native.gpuCommandEncoderBeginComputePass(encoderId, descriptor?) → compute pass handle ID
+fn gpuCommandEncoderBeginComputePassNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 1) return Value.@"null";
+
+    const encoder_id_val: Value = @bitCast(argv[0]);
+    const encoder_f64 = encoder_id_val.toFloat64(context) catch return Value.@"null";
+    const encoder_entry = ht.get(f64ToHandle(encoder_f64)) catch return Value.@"null";
+    const encoder: wgpu.CommandEncoder = encoder_entry.handle.as(wgpu.CommandEncoder) orelse return Value.@"null";
+
+    // For now, use null descriptor (defaults are fine for basic compute)
+    const compute_pass = encoder.beginComputePass(null);
+
+    const id = ht.alloc(.{ .compute_pass_encoder = @ptrCast(compute_pass) }) catch return Value.@"null";
+    return Value.initFloat64(@floatFromInt(id.toNumber()));
+}
+
+/// __native.gpuComputePassEncoderSetPipeline(passId, pipelineId) → undefined
+fn gpuComputePassEncoderSetPipelineNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.ComputePassEncoder = pass_entry.handle.as(wgpu.ComputePassEncoder) orelse return Value.undefined;
+
+    const pipeline_id_val: Value = @bitCast(argv[1]);
+    const pipeline_f64 = pipeline_id_val.toFloat64(context) catch return Value.undefined;
+    const pipeline_entry = ht.get(f64ToHandle(pipeline_f64)) catch return Value.undefined;
+    const pipeline: wgpu.ComputePipeline = pipeline_entry.handle.as(wgpu.ComputePipeline) orelse return Value.undefined;
+
+    pass.setPipeline(pipeline);
+
+    return Value.undefined;
+}
+
+/// __native.gpuComputePassEncoderSetBindGroup(passId, index, bindGroupId, offsets?) → undefined
+fn gpuComputePassEncoderSetBindGroupNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 3) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.ComputePassEncoder = pass_entry.handle.as(wgpu.ComputePassEncoder) orelse return Value.undefined;
+
+    const index_val: Value = @bitCast(argv[1]);
+    const index: u32 = @intFromFloat(index_val.toFloat64(context) catch return Value.undefined);
+
+    const bg_id_val: Value = @bitCast(argv[2]);
+    const bg_f64 = bg_id_val.toFloat64(context) catch return Value.undefined;
+    const bg_entry = ht.get(f64ToHandle(bg_f64)) catch return Value.undefined;
+    const bind_group: wgpu.BindGroup = bg_entry.handle.as(wgpu.BindGroup) orelse return Value.undefined;
+
+    // For now, ignore offsets (use null/0)
+    pass.setBindGroup(index, bind_group, null);
+
+    return Value.undefined;
+}
+
+/// __native.gpuComputePassEncoderDispatchWorkgroups(passId, x, y?, z?) → undefined
+fn gpuComputePassEncoderDispatchWorkgroupsNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.ComputePassEncoder = pass_entry.handle.as(wgpu.ComputePassEncoder) orelse return Value.undefined;
+
+    const x_val: Value = @bitCast(argv[1]);
+    const x: u32 = @intFromFloat(x_val.toFloat64(context) catch return Value.undefined);
+
+    var y: u32 = 1;
+    var z: u32 = 1;
+
+    if (argv.len >= 3) {
+        const v: Value = @bitCast(argv[2]);
+        if (!v.isUndefined()) y = @intFromFloat(v.toFloat64(context) catch 1);
+    }
+    if (argv.len >= 4) {
+        const v: Value = @bitCast(argv[3]);
+        if (!v.isUndefined()) z = @intFromFloat(v.toFloat64(context) catch 1);
+    }
+
+    pass.dispatchWorkgroups(x, y, z);
+
+    return Value.undefined;
+}
+
+/// __native.gpuComputePassEncoderEnd(passId) → undefined
+fn gpuComputePassEncoderEndNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 1) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_id = f64ToHandle(pass_f64);
+    const pass_entry = ht.get(pass_id) catch return Value.undefined;
+    const pass: wgpu.ComputePassEncoder = pass_entry.handle.as(wgpu.ComputePassEncoder) orelse {
         ht.free(pass_id) catch {};
         return Value.undefined;
     };
