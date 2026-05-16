@@ -21,6 +21,8 @@ pub const HandleType = enum {
     compute_pass_encoder,
     command_buffer,
     query_set,
+    render_bundle_encoder,
+    render_bundle,
 };
 
 /// Tagged union storing the opaque wgpu/Dawn pointer for each GPU object.
@@ -46,6 +48,8 @@ pub const DawnHandle = union(HandleType) {
     compute_pass_encoder: ?*anyopaque,
     command_buffer: ?*anyopaque,
     query_set: ?*anyopaque,
+    render_bundle_encoder: ?*anyopaque,
+    render_bundle: ?*anyopaque,
 
     /// Extract the stored opaque pointer, cast to the expected wgpu type.
     /// Returns null if the pointer was a placeholder.

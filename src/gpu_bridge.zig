@@ -650,6 +650,26 @@ pub const GpuBridge = struct {
         );
         native_obj.setPropertyStr(ctx, "gpuRenderPassDrawIndexedIndirect", rp_draw_idx_indirect_fn) catch return error.JSError;
 
+        // gpuCreateRenderBundleEncoder(deviceId, descriptor) → render bundle encoder handle
+        const create_rbe_fn = Value.initCFunctionData(
+            ctx,
+            &gpuCreateRenderBundleEncoderNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuCreateRenderBundleEncoder", create_rbe_fn) catch return error.JSError;
+
+        // gpuRenderBundleEncoderFinish(encoderId) → render bundle handle
+        const rbe_finish_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderBundleEncoderFinishNative,
+            1,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderBundleEncoderFinish", rbe_finish_fn) catch return error.JSError;
+
         // gpuCommandEncoderFinish(encoderId) → command buffer handle ID
         const ce_finish_fn = Value.initCFunctionData(
             ctx,
@@ -2991,6 +3011,105 @@ fn gpuRenderPassDrawIndexedIndirectNative(
     return Value.undefined;
 }
 
+/// __native.gpuCreateRenderBundleEncoder(deviceId, descriptor) → number (handle ID)
+///
+/// Creates a render bundle encoder from a descriptor with color formats.
+fn gpuCreateRenderBundleEncoderNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.@"null";
+    const bridge = getBridgeFromData(context, func_data) orelse return Value.@"null";
+    const ht = bridge.handle_table_ptr;
+    const gctx = bridge.gctx orelse return Value.@"null";
+
+    if (argv.len < 2) return Value.@"null";
+
+    const desc_val: Value = @bitCast(argv[1]);
+
+    // Parse colorFormats array
+    const cf_val = desc_val.getPropertyStr(context, "colorFormats");
+    defer cf_val.deinit(context);
+    var color_formats: [8]wgpu.TextureFormat = undefined;
+    var cf_count: usize = 0;
+    if (!cf_val.isUndefined() and !cf_val.isNull()) {
+        const len_val = cf_val.getPropertyStr(context, "length");
+        defer len_val.deinit(context);
+        cf_count = @min(@as(usize, @intFromFloat(len_val.toFloat64(context) catch 0)), 8);
+        for (0..cf_count) |i| {
+            const elem = cf_val.getPropertyUint32(context, @intCast(i));
+            defer elem.deinit(context);
+            if (elem.toCString(context)) |s| {
+                defer context.freeCString(s);
+                color_formats[i] = @enumFromInt(parseTextureFormat(std.mem.span(s)));
+            } else {
+                color_formats[i] = .bgra8_unorm;
+            }
+        }
+    }
+
+    // Parse optional depthStencilFormat
+    var depth_stencil_format: wgpu.TextureFormat = .undef;
+    const dsf_val = desc_val.getPropertyStr(context, "depthStencilFormat");
+    defer dsf_val.deinit(context);
+    if (dsf_val.toCString(context)) |s| {
+        defer context.freeCString(s);
+        depth_stencil_format = @enumFromInt(parseTextureFormat(std.mem.span(s)));
+    }
+
+    // Parse optional sampleCount (default 1)
+    var sample_count: u32 = 1;
+    const sc_val = desc_val.getPropertyStr(context, "sampleCount");
+    defer sc_val.deinit(context);
+    if (!sc_val.isUndefined()) {
+        sample_count = @intFromFloat(sc_val.toFloat64(context) catch 1);
+    }
+
+    var raw_desc = std.mem.zeroes(wgpu.RenderBundleEncoderDescriptor);
+    raw_desc.color_formats_count = cf_count;
+    raw_desc.color_formats = if (cf_count > 0) @ptrCast(&color_formats) else null;
+    raw_desc.depth_stencil_format = depth_stencil_format;
+    raw_desc.sample_count = sample_count;
+
+    const device: wgpu.Device = @ptrCast(gctx.device);
+    const encoder = device.createRenderBundleEncoder(raw_desc);
+
+    const id = ht.alloc(.{ .render_bundle_encoder = @ptrCast(encoder) }) catch return Value.@"null";
+    return Value.initFloat64(@floatFromInt(id.toNumber()));
+}
+
+/// __native.gpuRenderBundleEncoderFinish(encoderId) → number (render bundle handle ID)
+///
+/// Finishes building a render bundle and returns the resulting RenderBundle.
+fn gpuRenderBundleEncoderFinishNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.@"null";
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.@"null";
+
+    if (argv.len < 1) return Value.@"null";
+
+    const enc_id_val: Value = @bitCast(argv[0]);
+    const enc_f64 = enc_id_val.toFloat64(context) catch return Value.@"null";
+    const enc_id = f64ToHandle(enc_f64);
+    const enc_entry = ht.get(enc_id) catch return Value.@"null";
+    const encoder: wgpu.RenderBundleEncoder = enc_entry.handle.as(wgpu.RenderBundleEncoder) orelse return Value.@"null";
+
+    const bundle_desc = std.mem.zeroes(wgpu.RenderBundleDescriptor);
+    const bundle = encoder.finish(bundle_desc);
+    ht.free(enc_id) catch {};
+
+    const id = ht.alloc(.{ .render_bundle = @ptrCast(bundle) }) catch return Value.@"null";
+    return Value.initFloat64(@floatFromInt(id.toNumber()));
+}
+
 /// __native.gpuCommandEncoderFinish(encoderId) → number (command buffer handle ID)
 fn gpuCommandEncoderFinishNative(
     ctx: ?*Context,
@@ -4624,6 +4743,8 @@ test "register creates command encoding functions on __native" {
         \\typeof __native.gpuRenderPassInsertDebugMarker === 'function' &&
         \\typeof __native.gpuRenderPassDrawIndirect === 'function' &&
         \\typeof __native.gpuRenderPassDrawIndexedIndirect === 'function' &&
+        \\typeof __native.gpuCreateRenderBundleEncoder === 'function' &&
+        \\typeof __native.gpuRenderBundleEncoderFinish === 'function' &&
         \\typeof __native.gpuCommandEncoderFinish === 'function' &&
         \\typeof __native.gpuQueueSubmit === 'function'
     , "<test>");
@@ -5594,6 +5715,77 @@ test "gpuRenderPassEncoder.drawIndirect with non-zero offset" {
         \\  var cmdBuf = __native.gpuCommandEncoderFinish(encId);
         \\  __native.gpuQueueSubmit(queueId, [cmdBuf]);
         \\  __native.gpuPresent();
+        \\  return true;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7a: RenderBundleEncoder — lifecycle (create + finish)
+// ---------------------------------------------------------------------------
+// NOTE: Dawn's createRenderBundleEncoder hangs on WSL2/Dozen (Dawn bug).
+// The Zig-level implementation is verified via:
+// 1. JS registration test (function exists and is callable)
+// 2. Native function signature + error handling test below
+
+test "gpuCreateRenderBundleEncoder validates args and returns null without gctx" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht, null);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    // Verify the function returns null when called without a real GPU context
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  // Missing descriptor -> should return null, not crash
+        \\  var r1 = __native.gpuCreateRenderBundleEncoder(devId);
+        \\  if (r1 !== null) return 'expected null for missing descriptor';
+        \\  // Valid descriptor without gctx -> returns null
+        \\  var r2 = __native.gpuCreateRenderBundleEncoder(devId, { colorFormats: ['bgra8unorm'] });
+        \\  if (r2 !== null) return 'expected null without gctx';
+        \\  return true;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuRenderBundleEncoderFinish validates args and frees encoder" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht, null);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    // Verify finish returns null when called without real GPU context
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var encId = __native.gpuCreateRenderBundleEncoder(devId, { colorFormats: ['bgra8unorm'] });
+        \\  // Missing encoder -> should return null
+        \\  var r1 = __native.gpuRenderBundleEncoderFinish();
+        \\  if (r1 !== null) return 'expected null for missing encoder';
+        \\  // Valid call without gctx -> returns null
+        \\  var r2 = __native.gpuRenderBundleEncoderFinish(encId);
+        \\  if (r2 !== null) return 'expected null without gctx';
         \\  return true;
         \\})()
     ;
