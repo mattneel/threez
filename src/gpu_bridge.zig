@@ -53,6 +53,25 @@ pub fn createTestGpuContext(allocator: std.mem.Allocator) !struct { *dawn.Graphi
         .fn_getWin32Window = @ptrCast(&zglfw.getWin32Window),
     };
 
+    // Dawn/Vulkan emit noisy diagnostics to stderr during adapter init.
+    // Redirect stderr to /dev/null for the duration of GPU context creation
+    // to keep zig build test output clean.
+    const posix = std.posix;
+    const saved_stderr = posix.dup(2) catch null;
+    defer {
+        if (saved_stderr) |saved| {
+            posix.dup2(saved, 2) catch {};
+            posix.close(saved);
+        }
+    }
+    if (saved_stderr) |_| {
+        const null_fd = posix.openZ("/dev/null", .{ .ACCMODE = .WRONLY }, 0) catch null;
+        if (null_fd) |nfd| {
+            posix.dup2(nfd, 2) catch {};
+            posix.close(nfd);
+        }
+    }
+
     // Create real graphics context
     const gctx = try dawn.GraphicsContext.create(allocator, window_provider, .{});
     errdefer gctx.destroy(allocator);
@@ -610,6 +629,26 @@ pub const GpuBridge = struct {
             &.{ht_ptr_num},
         );
         native_obj.setPropertyStr(ctx, "gpuRenderPassInsertDebugMarker", rp_marker_fn) catch return error.JSError;
+
+        // gpuRenderPassDrawIndirect(passId, indirectBufferId, indirectOffset) → undefined
+        const rp_draw_indirect_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassDrawIndirectNative,
+            3,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassDrawIndirect", rp_draw_indirect_fn) catch return error.JSError;
+
+        // gpuRenderPassDrawIndexedIndirect(passId, indirectBufferId, indirectOffset) → undefined
+        const rp_draw_idx_indirect_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassDrawIndexedIndirectNative,
+            3,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassDrawIndexedIndirect", rp_draw_idx_indirect_fn) catch return error.JSError;
 
         // gpuCommandEncoderFinish(encoderId) → command buffer handle ID
         const ce_finish_fn = Value.initCFunctionData(
@@ -2888,6 +2927,70 @@ fn gpuRenderPassInsertDebugMarkerNative(
     return Value.undefined;
 }
 
+/// __native.gpuRenderPassDrawIndirect(passId, indirectBufferId, indirectOffset) → undefined
+///
+/// Draws primitives using parameters read from an indirect buffer.
+fn gpuRenderPassDrawIndirectNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 3) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.RenderPassEncoder = pass_entry.handle.as(wgpu.RenderPassEncoder) orelse return Value.undefined;
+
+    const buf_id_val: Value = @bitCast(argv[1]);
+    const buf_f64 = buf_id_val.toFloat64(context) catch return Value.undefined;
+    const buf_entry = ht.get(f64ToHandle(buf_f64)) catch return Value.undefined;
+    const indirect_buffer: wgpu.Buffer = buf_entry.handle.as(wgpu.Buffer) orelse return Value.undefined;
+
+    const off_val: Value = @bitCast(argv[2]);
+    const indirect_offset: u64 = @intFromFloat(off_val.toFloat64(context) catch return Value.undefined);
+
+    pass.drawIndirect(indirect_buffer, indirect_offset);
+    return Value.undefined;
+}
+
+/// __native.gpuRenderPassDrawIndexedIndirect(passId, indirectBufferId, indirectOffset) → undefined
+///
+/// Draws indexed primitives using parameters read from an indirect buffer.
+fn gpuRenderPassDrawIndexedIndirectNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 3) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.RenderPassEncoder = pass_entry.handle.as(wgpu.RenderPassEncoder) orelse return Value.undefined;
+
+    const buf_id_val: Value = @bitCast(argv[1]);
+    const buf_f64 = buf_id_val.toFloat64(context) catch return Value.undefined;
+    const buf_entry = ht.get(f64ToHandle(buf_f64)) catch return Value.undefined;
+    const indirect_buffer: wgpu.Buffer = buf_entry.handle.as(wgpu.Buffer) orelse return Value.undefined;
+
+    const off_val: Value = @bitCast(argv[2]);
+    const indirect_offset: u64 = @intFromFloat(off_val.toFloat64(context) catch return Value.undefined);
+
+    pass.drawIndexedIndirect(indirect_buffer, indirect_offset);
+    return Value.undefined;
+}
+
 /// __native.gpuCommandEncoderFinish(encoderId) → number (command buffer handle ID)
 fn gpuCommandEncoderFinishNative(
     ctx: ?*Context,
@@ -4519,6 +4622,8 @@ test "register creates command encoding functions on __native" {
         \\typeof __native.gpuRenderPassPushDebugGroup === 'function' &&
         \\typeof __native.gpuRenderPassPopDebugGroup === 'function' &&
         \\typeof __native.gpuRenderPassInsertDebugMarker === 'function' &&
+        \\typeof __native.gpuRenderPassDrawIndirect === 'function' &&
+        \\typeof __native.gpuRenderPassDrawIndexedIndirect === 'function' &&
         \\typeof __native.gpuCommandEncoderFinish === 'function' &&
         \\typeof __native.gpuQueueSubmit === 'function'
     , "<test>");
@@ -5302,6 +5407,189 @@ test "gpuRenderPassEncoder.setBlendConstant parses all color channels correctly"
         \\  __native.gpuRenderPassSetBlendConstant(passId, { r: 0.5, g: 0.5, b: 0.5, a: 0.5 });
         \\  // Test >1.0 values (clamping is GPU's responsibility)
         \\  __native.gpuRenderPassSetBlendConstant(passId, { r: 2.0, g: -0.5, b: 1.5, a: 3.0 });
+        \\  __native.gpuRenderPassEnd(passId);
+        \\  var cmdBuf = __native.gpuCommandEncoderFinish(encId);
+        \\  __native.gpuQueueSubmit(queueId, [cmdBuf]);
+        \\  __native.gpuPresent();
+        \\  return true;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6b: Indirect draw — hardware tests
+// ---------------------------------------------------------------------------
+
+test "gpuRenderPassEncoder.drawIndirect with real hardware" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    const context_result = try createTestGpuContext(testing.allocator);
+    const gctx = context_result[0];
+    const glfw_window = context_result[1];
+    defer destroyTestGpuContext(gctx, glfw_window, testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht, gctx);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var queueId = __native.gpuGetQueue(devId);
+        \\  // Create a minimal shader module
+        \\  var shader = __native.gpuCreateShaderModule(devId, {
+        \\    code: '@vertex fn vs() -> @builtin(position) vec4f { return vec4f(0,0,0,1); } @fragment fn fs() -> @location(0) vec4f { return vec4f(1,0,0,1); }'
+        \\  });
+        \\  // Create a render pipeline
+        \\  var pipeline = __native.gpuCreateRenderPipeline(devId, {
+        \\    vertex: { module: shader, entryPoint: 'vs' },
+        \\    fragment: { module: shader, entryPoint: 'fs', targets: [{ format: 'bgra8unorm' }] }
+        \\  });
+        \\  // Create an indirect draw buffer with draw parameters:
+        \\  // vertexCount=3, instanceCount=1, firstVertex=0, firstInstance=0
+        \\  var indirectBuf = __native.gpuCreateBuffer(devId, { size: 16, usage: 264 });
+        \\  var drawParams = new Uint32Array([3, 1, 0, 0]);
+        \\  __native.gpuQueueWriteBuffer(queueId, indirectBuf, 0, drawParams, 0, 16);
+        \\  __native.gpuConfigureContext(devId, 'bgra8unorm', 'opaque', 640, 480);
+        \\  var texId = __native.gpuGetCurrentTexture();
+        \\  var viewId = __native.gpuCreateTextureView(texId, {});
+        \\  var encId = __native.gpuCreateCommandEncoder(devId);
+        \\  var passId = __native.gpuCommandEncoderBeginRenderPass(encId, {
+        \\    colorAttachments: [{ view: viewId, loadOp: 'clear', storeOp: 'store' }]
+        \\  });
+        \\  __native.gpuRenderPassSetPipeline(passId, pipeline);
+        \\  var result = __native.gpuRenderPassDrawIndirect(passId, indirectBuf, 0);
+        \\  if (result !== undefined) return 'expected undefined, got ' + typeof result;
+        \\  __native.gpuRenderPassEnd(passId);
+        \\  var cmdBuf = __native.gpuCommandEncoderFinish(encId);
+        \\  __native.gpuQueueSubmit(queueId, [cmdBuf]);
+        \\  __native.gpuPresent();
+        \\  return true;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuRenderPassEncoder.drawIndexedIndirect with real hardware" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    const context_result = try createTestGpuContext(testing.allocator);
+    const gctx = context_result[0];
+    const glfw_window = context_result[1];
+    defer destroyTestGpuContext(gctx, glfw_window, testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht, gctx);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var queueId = __native.gpuGetQueue(devId);
+        \\  // Create a minimal shader module
+        \\  var shader = __native.gpuCreateShaderModule(devId, {
+        \\    code: '@vertex fn vs() -> @builtin(position) vec4f { return vec4f(0,0,0,1); } @fragment fn fs() -> @location(0) vec4f { return vec4f(1,0,0,1); }'
+        \\  });
+        \\  // Create a render pipeline
+        \\  var pipeline = __native.gpuCreateRenderPipeline(devId, {
+        \\    vertex: { module: shader, entryPoint: 'vs' },
+        \\    fragment: { module: shader, entryPoint: 'fs', targets: [{ format: 'bgra8unorm' }] }
+        \\  });
+        \\  // Create an indexed indirect draw buffer:
+        \\  // indexCount=6, instanceCount=1, firstIndex=0, baseVertex=0, firstInstance=0
+        \\  var indirectBuf = __native.gpuCreateBuffer(devId, { size: 20, usage: 264 });
+        \\  var drawParams = new Uint32Array([6, 1, 0, 0, 0]);
+        \\  __native.gpuQueueWriteBuffer(queueId, indirectBuf, 0, drawParams, 0, 20);
+        \\  // Create an index buffer (required for indexed draw)
+        \\  var indexBuf = __native.gpuCreateBuffer(devId, { size: 12, usage: 24 });
+        \\  var indexData = new Uint16Array([0, 1, 2, 0, 2, 3]);
+        \\  __native.gpuQueueWriteBuffer(queueId, indexBuf, 0, indexData, 0, 12);
+        \\  __native.gpuConfigureContext(devId, 'bgra8unorm', 'opaque', 640, 480);
+        \\  var texId = __native.gpuGetCurrentTexture();
+        \\  var viewId = __native.gpuCreateTextureView(texId, {});
+        \\  var encId = __native.gpuCreateCommandEncoder(devId);
+        \\  var passId = __native.gpuCommandEncoderBeginRenderPass(encId, {
+        \\    colorAttachments: [{ view: viewId, loadOp: 'clear', storeOp: 'store' }]
+        \\  });
+        \\  __native.gpuRenderPassSetPipeline(passId, pipeline);
+        \\  __native.gpuRenderPassSetIndexBuffer(passId, indexBuf, 'uint16', 0, 12);
+        \\  var result = __native.gpuRenderPassDrawIndexedIndirect(passId, indirectBuf, 0);
+        \\  if (result !== undefined) return 'expected undefined, got ' + typeof result;
+        \\  __native.gpuRenderPassEnd(passId);
+        \\  var cmdBuf = __native.gpuCommandEncoderFinish(encId);
+        \\  __native.gpuQueueSubmit(queueId, [cmdBuf]);
+        \\  __native.gpuPresent();
+        \\  return true;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuRenderPassEncoder.drawIndirect with non-zero offset" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    const context_result = try createTestGpuContext(testing.allocator);
+    const gctx = context_result[0];
+    const glfw_window = context_result[1];
+    defer destroyTestGpuContext(gctx, glfw_window, testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht, gctx);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var queueId = __native.gpuGetQueue(devId);
+        \\  // Create a minimal shader module
+        \\  var shader = __native.gpuCreateShaderModule(devId, {
+        \\    code: '@vertex fn vs() -> @builtin(position) vec4f { return vec4f(0,0,0,1); } @fragment fn fs() -> @location(0) vec4f { return vec4f(1,0,0,1); }'
+        \\  });
+        \\  // Create a render pipeline
+        \\  var pipeline = __native.gpuCreateRenderPipeline(devId, {
+        \\    vertex: { module: shader, entryPoint: 'vs' },
+        \\    fragment: { module: shader, entryPoint: 'fs', targets: [{ format: 'bgra8unorm' }] }
+        \\  });
+        \\  // Create buffer with two draw calls, use the second one (offset 16)
+        \\  var indirectBuf = __native.gpuCreateBuffer(devId, { size: 32, usage: 264 });
+        \\  var drawParams = new Uint32Array([0, 0, 0, 0, 3, 1, 0, 0]);
+        \\  __native.gpuQueueWriteBuffer(queueId, indirectBuf, 0, drawParams, 0, 32);
+        \\  __native.gpuConfigureContext(devId, 'bgra8unorm', 'opaque', 640, 480);
+        \\  var texId = __native.gpuGetCurrentTexture();
+        \\  var viewId = __native.gpuCreateTextureView(texId, {});
+        \\  var encId = __native.gpuCreateCommandEncoder(devId);
+        \\  var passId = __native.gpuCommandEncoderBeginRenderPass(encId, {
+        \\    colorAttachments: [{ view: viewId, loadOp: 'clear', storeOp: 'store' }]
+        \\  });
+        \\  __native.gpuRenderPassSetPipeline(passId, pipeline);
+        \\  // Use offset 16 to skip the first (zeroed) draw call
+        \\  var result = __native.gpuRenderPassDrawIndirect(passId, indirectBuf, 16);
+        \\  if (result !== undefined) return 'expected undefined, got ' + typeof result;
         \\  __native.gpuRenderPassEnd(passId);
         \\  var cmdBuf = __native.gpuCommandEncoderFinish(encId);
         \\  __native.gpuQueueSubmit(queueId, [cmdBuf]);
