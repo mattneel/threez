@@ -56,21 +56,27 @@ pub fn createTestGpuContext(allocator: std.mem.Allocator) !struct { *dawn.Graphi
     // Dawn/Vulkan emit noisy diagnostics to stderr during adapter init.
     // Redirect stderr to /dev/null for the duration of GPU context creation
     // to keep zig build test output clean.
-    const posix = std.posix;
-    const saved_stderr = posix.dup(2) catch null;
-    defer {
+    // On Windows, Dawn uses D3D12 (less noise) and posix.dup doesn't work
+    // with HANDLE-based fd_t, so skip the redirect.
+    const saved_stderr: if (builtin.os.tag != .windows) ?std.posix.fd_t else ?u0 = if (builtin.os.tag != .windows) blk: {
+        const posix = std.posix;
+        const saved = posix.dup(2) catch null;
+        if (saved) |_| {
+            const null_fd = posix.openZ("/dev/null", .{ .ACCMODE = .WRONLY }, 0) catch null;
+            if (null_fd) |nfd| {
+                posix.dup2(nfd, 2) catch {};
+                posix.close(nfd);
+            }
+        }
+        break :blk saved;
+    } else null;
+    defer if (builtin.os.tag != .windows) {
         if (saved_stderr) |saved| {
+            const posix = std.posix;
             posix.dup2(saved, 2) catch {};
             posix.close(saved);
         }
-    }
-    if (saved_stderr) |_| {
-        const null_fd = posix.openZ("/dev/null", .{ .ACCMODE = .WRONLY }, 0) catch null;
-        if (null_fd) |nfd| {
-            posix.dup2(nfd, 2) catch {};
-            posix.close(nfd);
-        }
-    }
+    };
 
     // Create real graphics context
     const gctx = try dawn.GraphicsContext.create(allocator, window_provider, .{});
@@ -2971,7 +2977,7 @@ fn gpuRenderPassPushDebugGroupNative(
     const label_ptr = label_val.toCString(context) orelse return Value.undefined;
     defer context.freeCString(label_ptr);
 
-    pass.pushDebugGroup(label_ptr);
+    pass.pushDebugGroup(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
     return Value.undefined;
 }
 
@@ -3023,7 +3029,7 @@ fn gpuRenderPassInsertDebugMarkerNative(
     const label_ptr = label_val.toCString(context) orelse return Value.undefined;
     defer context.freeCString(label_ptr);
 
-    pass.insertDebugMarker(label_ptr);
+    pass.insertDebugMarker(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
     return Value.undefined;
 }
 
@@ -3417,7 +3423,7 @@ fn gpuCommandEncoderPushDebugGroupNative(
     const label_ptr = label_val.toCString(context) orelse return Value.undefined;
     defer context.freeCString(label_ptr);
 
-    encoder.pushDebugGroup(label_ptr);
+    encoder.pushDebugGroup(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
     return Value.undefined;
 }
 
@@ -3465,7 +3471,7 @@ fn gpuCommandEncoderInsertDebugMarkerNative(
     const label_ptr = label_val.toCString(context) orelse return Value.undefined;
     defer context.freeCString(label_ptr);
 
-    encoder.insertDebugMarker(label_ptr);
+    encoder.insertDebugMarker(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
     return Value.undefined;
 }
 

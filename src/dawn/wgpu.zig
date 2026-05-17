@@ -1635,20 +1635,20 @@ pub const CommandEncoder = *opaque {
     }
     extern fn wgpuCommandEncoderInjectValidationError(command_encoder: CommandEncoder, message: [*:0]const u8) void;
 
-    pub fn insertDebugMarker(command_encoder: CommandEncoder, marker_label: [*:0]const u8) void {
+    pub fn insertDebugMarker(command_encoder: CommandEncoder, marker_label: StringView) void {
         wgpuCommandEncoderInsertDebugMarker(command_encoder, marker_label);
     }
-    extern fn wgpuCommandEncoderInsertDebugMarker(command_encoder: CommandEncoder, marker_label: [*:0]const u8) void;
+    extern fn wgpuCommandEncoderInsertDebugMarker(command_encoder: CommandEncoder, marker_label: StringView) void;
 
     pub fn popDebugGroup(command_encoder: CommandEncoder) void {
         wgpuCommandEncoderPopDebugGroup(command_encoder);
     }
     extern fn wgpuCommandEncoderPopDebugGroup(command_encoder: CommandEncoder) void;
 
-    pub fn pushDebugGroup(command_encoder: CommandEncoder, group_label: [*:0]const u8) void {
+    pub fn pushDebugGroup(command_encoder: CommandEncoder, group_label: StringView) void {
         wgpuCommandEncoderPushDebugGroup(command_encoder, group_label);
     }
-    extern fn wgpuCommandEncoderPushDebugGroup(command_encoder: CommandEncoder, group_label: [*:0]const u8) void;
+    extern fn wgpuCommandEncoderPushDebugGroup(command_encoder: CommandEncoder, group_label: StringView) void;
 
     pub fn resolveQuerySet(
         command_encoder: CommandEncoder,
@@ -1763,12 +1763,12 @@ pub const ComputePassEncoder = *opaque {
     }
     extern fn wgpuComputePassEncoderEnd(compute_pass_encoder: ComputePassEncoder) void;
 
-    pub fn insertDebugMarker(compute_pass_encoder: ComputePassEncoder, marker_label: [*:0]const u8) void {
+    pub fn insertDebugMarker(compute_pass_encoder: ComputePassEncoder, marker_label: StringView) void {
         wgpuComputePassEncoderInsertDebugMarker(compute_pass_encoder, marker_label);
     }
     extern fn wgpuComputePassEncoderInsertDebugMarker(
         compute_pass_encoder: ComputePassEncoder,
-        marker_label: [*:0]const u8,
+        marker_label: StringView,
     ) void;
 
     pub fn popDebugGroup(compute_pass_encoder: ComputePassEncoder) void {
@@ -1776,12 +1776,12 @@ pub const ComputePassEncoder = *opaque {
     }
     extern fn wgpuComputePassEncoderPopDebugGroup(compute_pass_encoder: ComputePassEncoder) void;
 
-    pub fn pushDebugGroup(compute_pass_encoder: ComputePassEncoder, group_label: [*:0]const u8) void {
+    pub fn pushDebugGroup(compute_pass_encoder: ComputePassEncoder, group_label: StringView) void {
         wgpuComputePassEncoderPushDebugGroup(compute_pass_encoder, group_label);
     }
     extern fn wgpuComputePassEncoderPushDebugGroup(
         compute_pass_encoder: ComputePassEncoder,
-        group_label: [*:0]const u8,
+        group_label: StringView,
     ) void;
 
     pub fn setBindGroup(
@@ -2428,13 +2428,13 @@ pub const RenderBundleEncoder = *opaque {
 
     pub fn insertDebugMarker(
         render_bundle_encoder: RenderBundleEncoder,
-        marker_label: [*:0]const u8,
+        marker_label: StringView,
     ) void {
         wgpuRenderBundleEncoderInsertDebugMarker(render_bundle_encoder, marker_label);
     }
     extern fn wgpuRenderBundleEncoderInsertDebugMarker(
         render_bundle_encoder: RenderBundleEncoder,
-        marker_label: [*:0]const u8,
+        marker_label: StringView,
     ) void;
 
     pub fn popDebugGroup(render_bundle_encoder: RenderBundleEncoder) void {
@@ -2442,12 +2442,12 @@ pub const RenderBundleEncoder = *opaque {
     }
     extern fn wgpuRenderBundleEncoderPopDebugGroup(render_bundle_encoder: RenderBundleEncoder) void;
 
-    pub fn pushDebugGroup(render_bundle_encoder: RenderBundleEncoder, group_label: [*:0]const u8) void {
+    pub fn pushDebugGroup(render_bundle_encoder: RenderBundleEncoder, group_label: StringView) void {
         wgpuRenderBundleEncoderPushDebugGroup(render_bundle_encoder, group_label);
     }
     extern fn wgpuRenderBundleEncoderPushDebugGroup(
         render_bundle_encoder: RenderBundleEncoder,
-        group_label: [*:0]const u8,
+        group_label: StringView,
     ) void;
 
     pub fn setBindGroup(
@@ -2634,12 +2634,12 @@ pub const RenderPassEncoder = *opaque {
         bundles: [*]const RenderBundle,
     ) void;
 
-    pub fn insertDebugMarker(render_pass_encoder: RenderPassEncoder, marker_label: [*:0]const u8) void {
+    pub fn insertDebugMarker(render_pass_encoder: RenderPassEncoder, marker_label: StringView) void {
         wgpuRenderPassEncoderInsertDebugMarker(render_pass_encoder, marker_label);
     }
     extern fn wgpuRenderPassEncoderInsertDebugMarker(
         render_pass_encoder: RenderPassEncoder,
-        marker_label: [*:0]const u8,
+        marker_label: StringView,
     ) void;
 
     pub fn popDebugGroup(render_pass_encoder: RenderPassEncoder) void {
@@ -2647,12 +2647,12 @@ pub const RenderPassEncoder = *opaque {
     }
     extern fn wgpuRenderPassEncoderPopDebugGroup(render_pass_encoder: RenderPassEncoder) void;
 
-    pub fn pushDebugGroup(render_pass_encoder: RenderPassEncoder, group_label: [*:0]const u8) void {
+    pub fn pushDebugGroup(render_pass_encoder: RenderPassEncoder, group_label: StringView) void {
         wgpuRenderPassEncoderPushDebugGroup(render_pass_encoder, group_label);
     }
     extern fn wgpuRenderPassEncoderPushDebugGroup(
         render_pass_encoder: RenderPassEncoder,
-        group_label: [*:0]const u8,
+        group_label: StringView,
     ) void;
 
     pub fn setBindGroup(

@@ -61,9 +61,10 @@ pub fn main() !void {
 
         if (!needs_reconfigure) {
             const build_exists = blk: {
-                _ = std.fs.cwd().statFile(build_dir) catch break :blk false;
-                break :blk true;
-            };
+            var dir = std.fs.cwd().openDir(build_dir, .{}) catch break :blk false;
+            dir.close();
+            break :blk true;
+        };
             if (!build_exists) {
                 std.debug.print("Build directory doesn't exist, reconfiguring\n", .{});
                 needs_reconfigure = true;
