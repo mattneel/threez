@@ -282,6 +282,36 @@ pub const GpuBridge = struct {
         );
         native_obj.setPropertyStr(ctx, "gpuDeviceDestroy", device_destroy_fn) catch return error.JSError;
 
+        // gpuGetAdapterInfo(adapterId) → { vendor, architecture, device, description, ... }
+        const adapter_info_fn = Value.initCFunctionData(
+            ctx,
+            &gpuGetAdapterInfoNative,
+            1,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuGetAdapterInfo", adapter_info_fn) catch return error.JSError;
+
+        // gpuDevicePushErrorScope(deviceId, filter) → undefined
+        const push_err_fn = Value.initCFunctionData(
+            ctx,
+            &gpuDevicePushErrorScopeNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuDevicePushErrorScope", push_err_fn) catch return error.JSError;
+
+        // gpuDevicePopErrorScope(deviceId) → undefined
+        const pop_err_fn = Value.initCFunctionData(
+            ctx,
+            &gpuDevicePopErrorScopeNative,
+            1,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuDevicePopErrorScope", pop_err_fn) catch return error.JSError;
+
         // gpuCreateBuffer(deviceId, descriptor) → buffer handle ID
         const create_buffer_fn = Value.initCFunctionData(
             ctx,
@@ -331,6 +361,16 @@ pub const GpuBridge = struct {
             &.{ht_ptr_num},
         );
         native_obj.setPropertyStr(ctx, "gpuBufferUnmap", buffer_unmap_fn) catch return error.JSError;
+
+        // gpuBufferMapAsync(bufferId, mode, offset, size) → undefined
+        const buffer_map_async_fn = Value.initCFunctionData(
+            ctx,
+            &gpuBufferMapAsyncNative,
+            4,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuBufferMapAsync", buffer_map_async_fn) catch return error.JSError;
 
         // gpuBufferGetMappedRange(bufferId, offset, size) → ArrayBuffer
         const buffer_get_mapped_fn = Value.initCFunctionData(
@@ -476,6 +516,16 @@ pub const GpuBridge = struct {
         );
         native_obj.setPropertyStr(ctx, "gpuComputePassEncoderDispatchWorkgroups", cp_dispatch_fn) catch return error.JSError;
 
+        // gpuComputePassEncoderDispatchWorkgroupsIndirect(passId, indirectBufferId, indirectOffset) → undefined
+        const cp_dispatch_indirect_fn = Value.initCFunctionData(
+            ctx,
+            &gpuComputePassEncoderDispatchWorkgroupsIndirectNative,
+            3,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuComputePassEncoderDispatchWorkgroupsIndirect", cp_dispatch_indirect_fn) catch return error.JSError;
+
         // gpuComputePassEncoderEnd(passId) → undefined
         const cp_end_fn = Value.initCFunctionData(
             ctx,
@@ -485,6 +535,36 @@ pub const GpuBridge = struct {
             &.{ht_ptr_num},
         );
         native_obj.setPropertyStr(ctx, "gpuComputePassEncoderEnd", cp_end_fn) catch return error.JSError;
+
+        // gpuComputePassEncoderPushDebugGroup(passId, groupLabel) → undefined
+        const cp_push_dbg_fn = Value.initCFunctionData(
+            ctx,
+            &gpuComputePassEncoderPushDebugGroupNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuComputePassEncoderPushDebugGroup", cp_push_dbg_fn) catch return error.JSError;
+
+        // gpuComputePassEncoderPopDebugGroup(passId) → undefined
+        const cp_pop_dbg_fn = Value.initCFunctionData(
+            ctx,
+            &gpuComputePassEncoderPopDebugGroupNative,
+            1,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuComputePassEncoderPopDebugGroup", cp_pop_dbg_fn) catch return error.JSError;
+
+        // gpuComputePassEncoderInsertDebugMarker(passId, markerLabel) → undefined
+        const cp_marker_fn = Value.initCFunctionData(
+            ctx,
+            &gpuComputePassEncoderInsertDebugMarkerNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuComputePassEncoderInsertDebugMarker", cp_marker_fn) catch return error.JSError;
 
         // gpuCommandEncoderBeginRenderPass(encoderId, descriptor) → render pass handle ID
         const begin_rp_fn = Value.initCFunctionData(
@@ -656,6 +736,16 @@ pub const GpuBridge = struct {
         );
         native_obj.setPropertyStr(ctx, "gpuRenderPassDrawIndexedIndirect", rp_draw_idx_indirect_fn) catch return error.JSError;
 
+        // gpuRenderPassExecuteBundles(passId, bundleIds) → undefined
+        const rp_exec_bundles_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderPassExecuteBundlesNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderPassExecuteBundles", rp_exec_bundles_fn) catch return error.JSError;
+
         // gpuCreateRenderBundleEncoder(deviceId, descriptor) → render bundle encoder handle
         const create_rbe_fn = Value.initCFunctionData(
             ctx,
@@ -675,6 +765,36 @@ pub const GpuBridge = struct {
             &.{ht_ptr_num},
         );
         native_obj.setPropertyStr(ctx, "gpuRenderBundleEncoderFinish", rbe_finish_fn) catch return error.JSError;
+
+        // gpuRenderBundleEncoderPushDebugGroup(encoderId, groupLabel) → undefined
+        const rbe_push_dbg_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderBundleEncoderPushDebugGroupNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderBundleEncoderPushDebugGroup", rbe_push_dbg_fn) catch return error.JSError;
+
+        // gpuRenderBundleEncoderPopDebugGroup(encoderId) → undefined
+        const rbe_pop_dbg_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderBundleEncoderPopDebugGroupNative,
+            1,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderBundleEncoderPopDebugGroup", rbe_pop_dbg_fn) catch return error.JSError;
+
+        // gpuRenderBundleEncoderInsertDebugMarker(encoderId, markerLabel) → undefined
+        const rbe_marker_fn = Value.initCFunctionData(
+            ctx,
+            &gpuRenderBundleEncoderInsertDebugMarkerNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuRenderBundleEncoderInsertDebugMarker", rbe_marker_fn) catch return error.JSError;
 
         // gpuCreateQuerySet(deviceId, descriptor) → query set handle
         const create_qs_fn = Value.initCFunctionData(
@@ -715,6 +835,36 @@ pub const GpuBridge = struct {
             &.{ht_ptr_num},
         );
         native_obj.setPropertyStr(ctx, "gpuCommandEncoderCopyBufferToBuffer", ce_copy_fn) catch return error.JSError;
+
+        // gpuCommandEncoderCopyBufferToTexture(encoderId, source, destination, copySize) → undefined
+        const ce_copy_b2t_fn = Value.initCFunctionData(
+            ctx,
+            &gpuCommandEncoderCopyBufferToTextureNative,
+            4,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuCommandEncoderCopyBufferToTexture", ce_copy_b2t_fn) catch return error.JSError;
+
+        // gpuCommandEncoderCopyTextureToBuffer(encoderId, source, destination, copySize) → undefined
+        const ce_copy_t2b_fn = Value.initCFunctionData(
+            ctx,
+            &gpuCommandEncoderCopyTextureToBufferNative,
+            4,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuCommandEncoderCopyTextureToBuffer", ce_copy_t2b_fn) catch return error.JSError;
+
+        // gpuCommandEncoderCopyTextureToTexture(encoderId, source, destination, copySize) → undefined
+        const ce_copy_t2t_fn = Value.initCFunctionData(
+            ctx,
+            &gpuCommandEncoderCopyTextureToTextureNative,
+            4,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuCommandEncoderCopyTextureToTexture", ce_copy_t2t_fn) catch return error.JSError;
 
         // gpuCommandEncoderWriteBuffer(encoderId, bufferId, offset, data, dataOff, size) → undefined
         const ce_write_fn = Value.initCFunctionData(
@@ -775,6 +925,16 @@ pub const GpuBridge = struct {
             &.{ht_ptr_num},
         );
         native_obj.setPropertyStr(ctx, "gpuQueueSubmit", queue_submit_fn) catch return error.JSError;
+
+        // gpuQueueOnSubmittedWorkDone(queueId) → undefined
+        const queue_oswd_fn = Value.initCFunctionData(
+            ctx,
+            &gpuQueueOnSubmittedWorkDoneNative,
+            1,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuQueueOnSubmittedWorkDone", queue_oswd_fn) catch return error.JSError;
 
         // gpuQueueWriteBuffer(queueId, bufferId, bufferOffset, data, dataOffset, size) → undefined
         const queue_write_buffer_fn = Value.initCFunctionData(
@@ -858,6 +1018,16 @@ pub const GpuBridge = struct {
             &.{ht_ptr_num},
         );
         native_obj.setPropertyStr(ctx, "gpuPresent", present_fn) catch return error.JSError;
+
+        // gpuSetLabel(handleId, label) → undefined (works on any handle type)
+        const set_label_fn = Value.initCFunctionData(
+            ctx,
+            &gpuSetLabelNative,
+            2,
+            0,
+            &.{ht_ptr_num},
+        );
+        native_obj.setPropertyStr(ctx, "gpuSetLabel", set_label_fn) catch return error.JSError;
     }
 };
 
@@ -2852,6 +3022,37 @@ fn gpuComputePassEncoderDispatchWorkgroupsNative(
     return Value.undefined;
 }
 
+/// __native.gpuComputePassEncoderDispatchWorkgroupsIndirect(passId, indirectBufferId, indirectOffset) → undefined
+fn gpuComputePassEncoderDispatchWorkgroupsIndirectNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 3) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.ComputePassEncoder = pass_entry.handle.as(wgpu.ComputePassEncoder) orelse return Value.undefined;
+
+    const buf_id_val: Value = @bitCast(argv[1]);
+    const buf_f64 = buf_id_val.toFloat64(context) catch return Value.undefined;
+    const buf_entry = ht.get(f64ToHandle(buf_f64)) catch return Value.undefined;
+    const indirect_buffer: wgpu.Buffer = buf_entry.handle.as(wgpu.Buffer) orelse return Value.undefined;
+
+    const off_val: Value = @bitCast(argv[2]);
+    const indirect_offset: u64 = @intFromFloat(off_val.toFloat64(context) catch 0);
+
+    pass.dispatchWorkgroupsIndirect(indirect_buffer, indirect_offset);
+
+    return Value.undefined;
+}
+
 /// __native.gpuComputePassEncoderEnd(passId) → undefined
 fn gpuComputePassEncoderEndNative(
     ctx: ?*Context,
@@ -2878,6 +3079,80 @@ fn gpuComputePassEncoderEndNative(
     pass.release();
     ht.free(pass_id) catch {};
 
+    return Value.undefined;
+}
+
+/// __native.gpuComputePassEncoderPushDebugGroup(passId, groupLabel) → undefined
+fn gpuComputePassEncoderPushDebugGroupNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.ComputePassEncoder = pass_entry.handle.as(wgpu.ComputePassEncoder) orelse return Value.undefined;
+
+    const label_val: Value = @bitCast(argv[1]);
+    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    defer context.freeCString(label_ptr);
+
+    pass.pushDebugGroup(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
+    return Value.undefined;
+}
+
+/// __native.gpuComputePassEncoderPopDebugGroup(passId) → undefined
+fn gpuComputePassEncoderPopDebugGroupNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 1) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.ComputePassEncoder = pass_entry.handle.as(wgpu.ComputePassEncoder) orelse return Value.undefined;
+
+    pass.popDebugGroup();
+    return Value.undefined;
+}
+
+/// __native.gpuComputePassEncoderInsertDebugMarker(passId, markerLabel) → undefined
+fn gpuComputePassEncoderInsertDebugMarkerNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.ComputePassEncoder = pass_entry.handle.as(wgpu.ComputePassEncoder) orelse return Value.undefined;
+
+    const label_val: Value = @bitCast(argv[1]);
+    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    defer context.freeCString(label_ptr);
+
+    pass.insertDebugMarker(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
     return Value.undefined;
 }
 
@@ -3164,6 +3439,43 @@ fn gpuRenderPassDrawIndexedIndirectNative(
     return Value.undefined;
 }
 
+/// __native.gpuRenderPassExecuteBundles(passId, bundleIds) → undefined
+fn gpuRenderPassExecuteBundlesNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    const pass_id_val: Value = @bitCast(argv[0]);
+    const pass_f64 = pass_id_val.toFloat64(context) catch return Value.undefined;
+    const pass_entry = ht.get(f64ToHandle(pass_f64)) catch return Value.undefined;
+    const pass: wgpu.RenderPassEncoder = pass_entry.handle.as(wgpu.RenderPassEncoder) orelse return Value.undefined;
+
+    // argv[1] is an array of bundle handle IDs
+    const bundles_val: Value = @bitCast(argv[1]);
+    const len_val = bundles_val.getPropertyStr(context, "length");
+    defer len_val.deinit(context);
+    const bundle_count: u32 = @intFromFloat(len_val.toFloat64(context) catch 0);
+
+    var bundles: [16]wgpu.RenderBundle = undefined;
+    for (0..@min(bundle_count, 16)) |i| {
+        const b_val = bundles_val.getPropertyUint32(context, @intCast(i));
+        defer b_val.deinit(context);
+        const b_f64 = b_val.toFloat64(context) catch continue;
+        const b_entry = ht.get(f64ToHandle(b_f64)) catch continue;
+        bundles[i] = b_entry.handle.as(wgpu.RenderBundle) orelse continue;
+    }
+
+    pass.executeBundles(@min(bundle_count, 16), &bundles);
+    return Value.undefined;
+}
+
 /// __native.gpuCreateRenderBundleEncoder(deviceId, descriptor) → number (handle ID)
 ///
 /// Creates a render bundle encoder from a descriptor with color formats.
@@ -3261,6 +3573,80 @@ fn gpuRenderBundleEncoderFinishNative(
 
     const id = ht.alloc(.{ .render_bundle = @ptrCast(bundle) }) catch return Value.@"null";
     return Value.initFloat64(@floatFromInt(id.toNumber()));
+}
+
+/// __native.gpuRenderBundleEncoderPushDebugGroup(encoderId, groupLabel) → undefined
+fn gpuRenderBundleEncoderPushDebugGroupNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    const enc_id_val: Value = @bitCast(argv[0]);
+    const enc_f64 = enc_id_val.toFloat64(context) catch return Value.undefined;
+    const enc_entry = ht.get(f64ToHandle(enc_f64)) catch return Value.undefined;
+    const encoder: wgpu.RenderBundleEncoder = enc_entry.handle.as(wgpu.RenderBundleEncoder) orelse return Value.undefined;
+
+    const label_val: Value = @bitCast(argv[1]);
+    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    defer context.freeCString(label_ptr);
+
+    encoder.pushDebugGroup(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
+    return Value.undefined;
+}
+
+/// __native.gpuRenderBundleEncoderPopDebugGroup(encoderId) → undefined
+fn gpuRenderBundleEncoderPopDebugGroupNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 1) return Value.undefined;
+
+    const enc_id_val: Value = @bitCast(argv[0]);
+    const enc_f64 = enc_id_val.toFloat64(context) catch return Value.undefined;
+    const enc_entry = ht.get(f64ToHandle(enc_f64)) catch return Value.undefined;
+    const encoder: wgpu.RenderBundleEncoder = enc_entry.handle.as(wgpu.RenderBundleEncoder) orelse return Value.undefined;
+
+    encoder.popDebugGroup();
+    return Value.undefined;
+}
+
+/// __native.gpuRenderBundleEncoderInsertDebugMarker(encoderId, markerLabel) → undefined
+fn gpuRenderBundleEncoderInsertDebugMarkerNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    const enc_id_val: Value = @bitCast(argv[0]);
+    const enc_f64 = enc_id_val.toFloat64(context) catch return Value.undefined;
+    const enc_entry = ht.get(f64ToHandle(enc_f64)) catch return Value.undefined;
+    const encoder: wgpu.RenderBundleEncoder = enc_entry.handle.as(wgpu.RenderBundleEncoder) orelse return Value.undefined;
+
+    const label_val: Value = @bitCast(argv[1]);
+    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    defer context.freeCString(label_ptr);
+
+    encoder.insertDebugMarker(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
+    return Value.undefined;
 }
 
 /// __native.gpuCreateQuerySet(deviceId, descriptor) → number (handle ID)
@@ -3410,6 +3796,295 @@ fn gpuCommandEncoderCopyBufferToBufferNative(
 
     encoder.copyBufferToBuffer(src, src_off, dst, dst_off, size);
     return Value.undefined;
+}
+
+/// __native.gpuCommandEncoderCopyBufferToTexture(encoderId, source, destination, copySize) → undefined
+fn gpuCommandEncoderCopyBufferToTextureNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 4) return Value.undefined;
+
+    const enc_id_val: Value = @bitCast(argv[0]);
+    const enc_f64 = enc_id_val.toFloat64(context) catch return Value.undefined;
+    const enc_entry = ht.get(f64ToHandle(enc_f64)) catch return Value.undefined;
+    const encoder: wgpu.CommandEncoder = enc_entry.handle.as(wgpu.CommandEncoder) orelse return Value.undefined;
+
+    // Parse source (ImageCopyBuffer)
+    const src_val: Value = @bitCast(argv[1]);
+    const src_buf_id_val = src_val.getPropertyStr(context, "buffer");
+    defer src_buf_id_val.deinit(context);
+    const src_buf_f64 = src_buf_id_val.toFloat64(context) catch return Value.undefined;
+    const src_buf_entry = ht.get(f64ToHandle(src_buf_f64)) catch return Value.undefined;
+    const src_buffer: wgpu.Buffer = src_buf_entry.handle.as(wgpu.Buffer) orelse return Value.undefined;
+
+    const src_layout = wgpu.TextureDataLayout{
+        .offset = blk: {
+            const off_val = src_val.getPropertyStr(context, "offset");
+            defer off_val.deinit(context);
+            break :blk @intFromFloat(off_val.toFloat64(context) catch 0);
+        },
+        .bytes_per_row = blk: {
+            const bpr_val = src_val.getPropertyStr(context, "bytesPerRow");
+            defer bpr_val.deinit(context);
+            break :blk @intFromFloat(bpr_val.toFloat64(context) catch 256);
+        },
+        .rows_per_image = blk: {
+            const rpi_val = src_val.getPropertyStr(context, "rowsPerImage");
+            defer rpi_val.deinit(context);
+            break :blk @intFromFloat(rpi_val.toFloat64(context) catch 0);
+        },
+    };
+
+    // Parse destination (ImageCopyTexture)
+    const dst_val: Value = @bitCast(argv[2]);
+    const dst_tex_id_val = dst_val.getPropertyStr(context, "texture");
+    defer dst_tex_id_val.deinit(context);
+    const dst_tex_f64 = dst_tex_id_val.toFloat64(context) catch return Value.undefined;
+    const dst_tex_entry = ht.get(f64ToHandle(dst_tex_f64)) catch return Value.undefined;
+    const dst_texture: wgpu.Texture = dst_tex_entry.handle.as(wgpu.Texture) orelse return Value.undefined;
+
+    const dst_origin = wgpu.Origin3D{
+        .x = blk: {
+            const origin_val = dst_val.getPropertyStr(context, "origin");
+            defer origin_val.deinit(context);
+            if (!origin_val.isUndefined()) {
+                const x_val = origin_val.getPropertyStr(context, "x");
+                defer x_val.deinit(context);
+                break :blk @intFromFloat(x_val.toFloat64(context) catch 0);
+            }
+            break :blk 0;
+        },
+        .y = blk: {
+            const origin_val = dst_val.getPropertyStr(context, "origin");
+            defer origin_val.deinit(context);
+            if (!origin_val.isUndefined()) {
+                const y_val = origin_val.getPropertyStr(context, "y");
+                defer y_val.deinit(context);
+                break :blk @intFromFloat(y_val.toFloat64(context) catch 0);
+            }
+            break :blk 0;
+        },
+        .z = blk: {
+            const origin_val = dst_val.getPropertyStr(context, "origin");
+            defer origin_val.deinit(context);
+            if (!origin_val.isUndefined()) {
+                const z_val = origin_val.getPropertyStr(context, "z");
+                defer z_val.deinit(context);
+                break :blk @intFromFloat(z_val.toFloat64(context) catch 0);
+            }
+            break :blk 0;
+        },
+    };
+
+    const dst_mip = blk: {
+        const mip_val = dst_val.getPropertyStr(context, "mipLevel");
+        defer mip_val.deinit(context);
+        break :blk @as(u32, @intFromFloat(mip_val.toFloat64(context) catch 0));
+    };
+
+    // Parse copySize (Extent3D)
+    const size_val: Value = @bitCast(argv[3]);
+    const copy_size = wgpu.Extent3D{
+        .width = blk: {
+            const w_val = size_val.getPropertyStr(context, "width");
+            defer w_val.deinit(context);
+            break :blk @intFromFloat(w_val.toFloat64(context) catch 1);
+        },
+        .height = blk: {
+            const h_val = size_val.getPropertyStr(context, "height");
+            defer h_val.deinit(context);
+            break :blk @intFromFloat(h_val.toFloat64(context) catch 1);
+        },
+        .depth_or_array_layers = blk: {
+            const d_val = size_val.getPropertyStr(context, "depthOrArrayLayers");
+            defer d_val.deinit(context);
+            break :blk @intFromFloat(d_val.toFloat64(context) catch 1);
+        },
+    };
+
+    encoder.copyBufferToTexture(
+        .{ .buffer = src_buffer, .layout = src_layout },
+        .{ .texture = dst_texture, .mip_level = @intCast(dst_mip), .origin = dst_origin },
+        copy_size,
+    );
+    return Value.undefined;
+}
+
+/// __native.gpuCommandEncoderCopyTextureToBuffer(encoderId, source, destination, copySize) → undefined
+fn gpuCommandEncoderCopyTextureToBufferNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 4) return Value.undefined;
+
+    const enc_id_val: Value = @bitCast(argv[0]);
+    const enc_f64 = enc_id_val.toFloat64(context) catch return Value.undefined;
+    const enc_entry = ht.get(f64ToHandle(enc_f64)) catch return Value.undefined;
+    const encoder: wgpu.CommandEncoder = enc_entry.handle.as(wgpu.CommandEncoder) orelse return Value.undefined;
+
+    // Parse source (ImageCopyTexture)
+    const src_val: Value = @bitCast(argv[1]);
+    const src_tex_id_val = src_val.getPropertyStr(context, "texture");
+    defer src_tex_id_val.deinit(context);
+    const src_tex_f64 = src_tex_id_val.toFloat64(context) catch return Value.undefined;
+    const src_tex_entry = ht.get(f64ToHandle(src_tex_f64)) catch return Value.undefined;
+    const src_texture: wgpu.Texture = src_tex_entry.handle.as(wgpu.Texture) orelse return Value.undefined;
+
+    const src_origin = parseOrigin3D(context, src_val);
+    const src_mip = parseMipLevel(context, src_val);
+
+    // Parse destination (ImageCopyBuffer)
+    const dst_val: Value = @bitCast(argv[2]);
+    const dst_buf_id_val = dst_val.getPropertyStr(context, "buffer");
+    defer dst_buf_id_val.deinit(context);
+    const dst_buf_f64 = dst_buf_id_val.toFloat64(context) catch return Value.undefined;
+    const dst_buf_entry = ht.get(f64ToHandle(dst_buf_f64)) catch return Value.undefined;
+    const dst_buffer: wgpu.Buffer = dst_buf_entry.handle.as(wgpu.Buffer) orelse return Value.undefined;
+
+    const dst_layout = parseTextureDataLayout(context, dst_val);
+
+    // Parse copySize
+    const size_val: Value = @bitCast(argv[3]);
+    const copy_size = parseExtent3D(context, size_val);
+
+    encoder.copyTextureToBuffer(
+        .{ .texture = src_texture, .mip_level = @intCast(src_mip), .origin = src_origin },
+        .{ .buffer = dst_buffer, .layout = dst_layout },
+        copy_size,
+    );
+    return Value.undefined;
+}
+
+/// __native.gpuCommandEncoderCopyTextureToTexture(encoderId, source, destination, copySize) → undefined
+fn gpuCommandEncoderCopyTextureToTextureNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 4) return Value.undefined;
+
+    const enc_id_val: Value = @bitCast(argv[0]);
+    const enc_f64 = enc_id_val.toFloat64(context) catch return Value.undefined;
+    const enc_entry = ht.get(f64ToHandle(enc_f64)) catch return Value.undefined;
+    const encoder: wgpu.CommandEncoder = enc_entry.handle.as(wgpu.CommandEncoder) orelse return Value.undefined;
+
+    // Parse source (ImageCopyTexture)
+    const src_val: Value = @bitCast(argv[1]);
+    const src_tex_id_val = src_val.getPropertyStr(context, "texture");
+    defer src_tex_id_val.deinit(context);
+    const src_tex_f64 = src_tex_id_val.toFloat64(context) catch return Value.undefined;
+    const src_tex_entry = ht.get(f64ToHandle(src_tex_f64)) catch return Value.undefined;
+    const src_texture: wgpu.Texture = src_tex_entry.handle.as(wgpu.Texture) orelse return Value.undefined;
+    const src_origin = parseOrigin3D(context, src_val);
+    const src_mip = parseMipLevel(context, src_val);
+
+    // Parse destination (ImageCopyTexture)
+    const dst_val: Value = @bitCast(argv[2]);
+    const dst_tex_id_val = dst_val.getPropertyStr(context, "texture");
+    defer dst_tex_id_val.deinit(context);
+    const dst_tex_f64 = dst_tex_id_val.toFloat64(context) catch return Value.undefined;
+    const dst_tex_entry = ht.get(f64ToHandle(dst_tex_f64)) catch return Value.undefined;
+    const dst_texture: wgpu.Texture = dst_tex_entry.handle.as(wgpu.Texture) orelse return Value.undefined;
+    const dst_origin = parseOrigin3D(context, dst_val);
+    const dst_mip = parseMipLevel(context, dst_val);
+
+    // Parse copySize
+    const size_val: Value = @bitCast(argv[3]);
+    const copy_size = parseExtent3D(context, size_val);
+
+    encoder.copyTextureToTexture(
+        .{ .texture = src_texture, .mip_level = @intCast(src_mip), .origin = src_origin },
+        .{ .texture = dst_texture, .mip_level = @intCast(dst_mip), .origin = dst_origin },
+        copy_size,
+    );
+    return Value.undefined;
+}
+
+fn parseOrigin3D(context: *Context, obj: Value) wgpu.Origin3D {
+    const origin_val = obj.getPropertyStr(context, "origin");
+    defer origin_val.deinit(context);
+    if (origin_val.isUndefined()) return .{};
+    return .{
+        .x = blk: {
+            const v = origin_val.getPropertyStr(context, "x");
+            defer v.deinit(context);
+            break :blk @intFromFloat(v.toFloat64(context) catch 0);
+        },
+        .y = blk: {
+            const v = origin_val.getPropertyStr(context, "y");
+            defer v.deinit(context);
+            break :blk @intFromFloat(v.toFloat64(context) catch 0);
+        },
+        .z = blk: {
+            const v = origin_val.getPropertyStr(context, "z");
+            defer v.deinit(context);
+            break :blk @intFromFloat(v.toFloat64(context) catch 0);
+        },
+    };
+}
+
+fn parseMipLevel(context: *Context, obj: Value) u32 {
+    const mip_val = obj.getPropertyStr(context, "mipLevel");
+    defer mip_val.deinit(context);
+    return @as(u32, @intFromFloat(mip_val.toFloat64(context) catch 0));
+}
+
+fn parseTextureDataLayout(context: *Context, obj: Value) wgpu.TextureDataLayout {
+    return .{
+        .offset = blk: {
+            const v = obj.getPropertyStr(context, "offset");
+            defer v.deinit(context);
+            break :blk @intFromFloat(v.toFloat64(context) catch 0);
+        },
+        .bytes_per_row = blk: {
+            const v = obj.getPropertyStr(context, "bytesPerRow");
+            defer v.deinit(context);
+            break :blk @intFromFloat(v.toFloat64(context) catch 256);
+        },
+        .rows_per_image = blk: {
+            const v = obj.getPropertyStr(context, "rowsPerImage");
+            defer v.deinit(context);
+            break :blk @intFromFloat(v.toFloat64(context) catch 0);
+        },
+    };
+}
+
+fn parseExtent3D(context: *Context, obj: Value) wgpu.Extent3D {
+    return .{
+        .width = blk: {
+            const v = obj.getPropertyStr(context, "width");
+            defer v.deinit(context);
+            break :blk @intFromFloat(v.toFloat64(context) catch 1);
+        },
+        .height = blk: {
+            const v = obj.getPropertyStr(context, "height");
+            defer v.deinit(context);
+            break :blk @intFromFloat(v.toFloat64(context) catch 1);
+        },
+        .depth_or_array_layers = blk: {
+            const v = obj.getPropertyStr(context, "depthOrArrayLayers");
+            defer v.deinit(context);
+            break :blk @intFromFloat(v.toFloat64(context) catch 1);
+        },
+    };
 }
 
 /// __native.gpuCommandEncoderWriteBuffer(encoderId, bufferId, offset, data, dataOffset, size) → undefined
@@ -3608,6 +4283,216 @@ fn gpuQueueSubmitNative(
 
     gctx.queue.submit(cmd_bufs[0..actual_count]);
     return Value.undefined;
+}
+
+/// __native.gpuQueueOnSubmittedWorkDone(queueId) → undefined
+///
+/// Schedules a no-op signal to be signaled when all previously submitted
+/// work on the queue has completed. Used as a fence/synchronization point.
+fn gpuQueueOnSubmittedWorkDoneNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const bridge = getBridgeFromData(context, func_data) orelse return Value.undefined;
+    const gctx = bridge.gctx orelse return Value.undefined;
+
+    if (argv.len < 1) return Value.undefined;
+
+    const queue_id_val: Value = @bitCast(argv[0]);
+    _ = queue_id_val.toFloat64(context) catch return Value.undefined;
+
+    gctx.queue.onSubmittedWorkDone(0, &queueWorkDoneNoop, null);
+    return Value.undefined;
+}
+
+fn queueWorkDoneNoop(status: wgpu.QueueWorkDoneStatus, userdata: ?*anyopaque) callconv(.c) void {
+    _ = status;
+    _ = userdata;
+}
+
+/// __native.gpuDevicePushErrorScope(deviceId, filter) → undefined
+fn gpuDevicePushErrorScopeNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const bridge = getBridgeFromData(context, func_data) orelse return Value.undefined;
+    const gctx = bridge.gctx orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    const filter_val: Value = @bitCast(argv[1]);
+    const filter_str = filter_val.toCString(context) orelse return Value.undefined;
+    defer context.freeCString(filter_str);
+
+    const filter: wgpu.ErrorFilter = if (std.mem.eql(u8, std.mem.span(filter_str), "out-of-memory"))
+        .out_of_memory
+    else if (std.mem.eql(u8, std.mem.span(filter_str), "internal"))
+        .internal
+    else
+        .validation;
+
+    gctx.device.pushErrorScope(filter);
+    return Value.undefined;
+}
+
+fn errorScopeNoop(
+    err_type: wgpu.ErrorType,
+    message: wgpu.StringView,
+    userdata: ?*anyopaque,
+) callconv(.c) void {
+    _ = err_type;
+    _ = message;
+    _ = userdata;
+}
+
+/// __native.gpuDevicePopErrorScope(deviceId) → undefined
+fn gpuDevicePopErrorScopeNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const bridge = getBridgeFromData(context, func_data) orelse return Value.undefined;
+    const gctx = bridge.gctx orelse return Value.undefined;
+
+    if (argv.len < 1) return Value.undefined;
+
+    _ = gctx.device.popErrorScope(&errorScopeNoop, null);
+    return Value.undefined;
+}
+
+/// __native.gpuBufferMapAsync(bufferId, mode, offset, size) → undefined
+fn gpuBufferMapAsyncNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 4) return Value.undefined;
+
+    const buf_id_val: Value = @bitCast(argv[0]);
+    const buf_f64 = buf_id_val.toFloat64(context) catch return Value.undefined;
+    const buf_entry = ht.get(f64ToHandle(buf_f64)) catch return Value.undefined;
+    const buffer: wgpu.Buffer = buf_entry.handle.as(wgpu.Buffer) orelse return Value.undefined;
+
+    const mode_val: Value = @bitCast(argv[1]);
+    const mode_raw: u32 = @intFromFloat(mode_val.toFloat64(context) catch return Value.undefined);
+    const mode: wgpu.MapMode = @bitCast(mode_raw);
+
+    const off_val: Value = @bitCast(argv[2]);
+    const offset: usize = @intFromFloat(off_val.toFloat64(context) catch 0);
+
+    const size_val: Value = @bitCast(argv[3]);
+    const size: usize = @intFromFloat(size_val.toFloat64(context) catch return Value.undefined);
+
+    buffer.mapAsync(mode, offset, size, &bufferMapNoop, null);
+    return Value.undefined;
+}
+
+fn bufferMapNoop(status: wgpu.BufferMapAsyncStatus, userdata: ?*anyopaque) callconv(.c) void {
+    _ = status;
+    _ = userdata;
+}
+
+/// __native.gpuSetLabel(handleId, label) → undefined
+///
+/// Sets the debug label on any GPU object. Dispatches to the correct
+/// Dawn setLabel based on the handle type stored in the handle table.
+fn gpuSetLabelNative(
+    ctx: ?*Context,
+    _: Value,
+    argv: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.undefined;
+    const ht = getHandleTableFromData(context, func_data) orelse return Value.undefined;
+
+    if (argv.len < 2) return Value.undefined;
+
+    const id_val: Value = @bitCast(argv[0]);
+    const id_f64 = id_val.toFloat64(context) catch return Value.undefined;
+    const id = f64ToHandle(id_f64);
+    const entry = ht.get(id) catch return Value.undefined;
+
+    const label_val: Value = @bitCast(argv[1]);
+    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    defer context.freeCString(label_ptr);
+    const label_len = std.mem.sliceTo(label_ptr, 0).len;
+
+    const sv = wgpu.StringView{ .data = label_ptr, .length = label_len };
+
+    switch (entry.handle_type) {
+        .device => if (entry.handle.as(wgpu.Device)) |h| h.setLabel(sv),
+        .queue => if (entry.handle.as(wgpu.Queue)) |h| h.setLabel(sv),
+        .buffer => if (entry.handle.as(wgpu.Buffer)) |h| h.setLabel(sv),
+        .texture => if (entry.handle.as(wgpu.Texture)) |h| h.setLabel(sv),
+        .texture_view => if (entry.handle.as(wgpu.TextureView)) |h| h.setLabel(sv),
+        .sampler => if (entry.handle.as(wgpu.Sampler)) |h| h.setLabel(sv),
+        .shader_module => if (entry.handle.as(wgpu.ShaderModule)) |h| h.setLabel(sv),
+        .bind_group => if (entry.handle.as(wgpu.BindGroup)) |h| h.setLabel(sv),
+        .bind_group_layout => if (entry.handle.as(wgpu.BindGroupLayout)) |h| h.setLabel(sv),
+        .pipeline_layout => if (entry.handle.as(wgpu.PipelineLayout)) |h| h.setLabel(sv),
+        .render_pipeline => if (entry.handle.as(wgpu.RenderPipeline)) |h| h.setLabel(sv),
+        .compute_pipeline => if (entry.handle.as(wgpu.ComputePipeline)) |h| h.setLabel(sv),
+        .command_encoder => if (entry.handle.as(wgpu.CommandEncoder)) |h| h.setLabel(sv),
+        .render_pass_encoder => if (entry.handle.as(wgpu.RenderPassEncoder)) |h| h.setLabel(sv),
+        .compute_pass_encoder => if (entry.handle.as(wgpu.ComputePassEncoder)) |h| h.setLabel(sv),
+        .render_bundle_encoder => if (entry.handle.as(wgpu.RenderBundleEncoder)) |h| h.setLabel(sv),
+        .query_set => if (entry.handle.as(wgpu.QuerySet)) |h| h.setLabel(sv),
+        .command_buffer => if (entry.handle.as(wgpu.CommandBuffer)) |h| h.setLabel(sv),
+        else => {},
+    }
+    return Value.undefined;
+}
+
+/// __native.gpuGetAdapterInfo(adapterId) → object { vendor, architecture, device, description, backendType }
+fn gpuGetAdapterInfoNative(
+    ctx: ?*Context,
+    _: Value,
+    _: []const c.JSValue,
+    _: c_int,
+    func_data: [*c]c.JSValue,
+) Value {
+    const context = ctx orelse return Value.@"null";
+    const bridge = getBridgeFromData(context, func_data) orelse return Value.@"null";
+    const gctx = bridge.gctx orelse return Value.@"null";
+
+    var info = std.mem.zeroes(wgpu.AdapterInfo);
+    _ = gctx.adapter.getInfo(&info);
+
+    const obj = Value.initObject(context);
+    obj.setPropertyStr(context, "vendor", stringViewToJsValue(context, info.vendor)) catch {};
+    obj.setPropertyStr(context, "architecture", stringViewToJsValue(context, info.architecture)) catch {};
+    obj.setPropertyStr(context, "device", stringViewToJsValue(context, info.device)) catch {};
+    obj.setPropertyStr(context, "description", stringViewToJsValue(context, info.description)) catch {};
+    obj.setPropertyStr(context, "backendType", Value.initInt32(@intCast(@intFromEnum(info.backend_type)))) catch {};
+    obj.setPropertyStr(context, "adapterType", Value.initInt32(@intCast(@intFromEnum(info.adapter_type)))) catch {};
+    obj.setPropertyStr(context, "vendorID", Value.initInt32(@intCast(info.vendor_id))) catch {};
+    obj.setPropertyStr(context, "deviceID", Value.initInt32(@intCast(info.device_id))) catch {};
+    return obj;
+}
+
+fn stringViewToJsValue(context: *Context, sv: wgpu.StringView) Value {
+    if (sv.data) |data| {
+        const slice = data[0..sv.length];
+        return Value.initStringLen(context, slice);
+    }
+    return Value.initStringLen(context, "");
 }
 
 // ---------------------------------------------------------------------------
@@ -5190,8 +6075,12 @@ test "register creates command encoding functions on __native" {
         \\typeof __native.gpuRenderPassInsertDebugMarker === 'function' &&
         \\typeof __native.gpuRenderPassDrawIndirect === 'function' &&
         \\typeof __native.gpuRenderPassDrawIndexedIndirect === 'function' &&
+        \\typeof __native.gpuRenderPassExecuteBundles === 'function' &&
         \\typeof __native.gpuCreateRenderBundleEncoder === 'function' &&
         \\typeof __native.gpuRenderBundleEncoderFinish === 'function' &&
+        \\typeof __native.gpuRenderBundleEncoderPushDebugGroup === 'function' &&
+        \\typeof __native.gpuRenderBundleEncoderPopDebugGroup === 'function' &&
+        \\typeof __native.gpuRenderBundleEncoderInsertDebugMarker === 'function' &&
         \\typeof __native.gpuCreateQuerySet === 'function' &&
         \\typeof __native.gpuQuerySetDestroy === 'function' &&
         \\typeof __native.gpuCommandEncoderClearBuffer === 'function' &&
@@ -5201,7 +6090,8 @@ test "register creates command encoding functions on __native" {
         \\typeof __native.gpuCommandEncoderPopDebugGroup === 'function' &&
         \\typeof __native.gpuCommandEncoderInsertDebugMarker === 'function' &&
         \\typeof __native.gpuCommandEncoderFinish === 'function' &&
-        \\typeof __native.gpuQueueSubmit === 'function'
+        \\typeof __native.gpuQueueSubmit === 'function' &&
+        \\typeof __native.gpuQueueOnSubmittedWorkDone === 'function'
     , "<test>");
     defer result.deinit();
 
@@ -5797,6 +6687,92 @@ test "gpuCreateComputePipeline with real hardware" {
         \\  });
         \\  if (pipeId === null) return 'pipeline creation returned null';
         \\  if (typeof pipeId !== 'number') return 'expected number, got ' + typeof pipeId;
+        \\  return true;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuComputePassEncoderDispatchWorkgroupsIndirect with real hardware" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    const context_result = try createTestGpuContext(testing.allocator);
+    const gctx = context_result[0];
+    const glfw_window = context_result[1];
+    defer destroyTestGpuContext(gctx, glfw_window, testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht, gctx);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var modId = __native.gpuCreateShaderModule(devId, {
+        \\    code: '@compute @workgroup_size(64) fn main() {}'
+        \\  });
+        \\  var pipeId = __native.gpuCreateComputePipeline(devId, {
+        \\    compute: { module: modId, entryPoint: 'main' }
+        \\  });
+        \\  var bufId = __native.gpuCreateBuffer(devId, {
+        \\    size: 16, usage: 256 | 512
+        \\  });
+        \\  var encId = __native.gpuCreateCommandEncoder(devId);
+        \\  var passId = __native.gpuCommandEncoderBeginComputePass(encId, {});
+        \\  __native.gpuComputePassEncoderSetPipeline(passId, pipeId);
+        \\  var result = __native.gpuComputePassEncoderDispatchWorkgroupsIndirect(passId, bufId, 0);
+        \\  if (result !== undefined) return 'expected undefined, got ' + typeof result;
+        \\  __native.gpuComputePassEncoderEnd(passId);
+        \\  var cmdBuf = __native.gpuCommandEncoderFinish(encId);
+        \\  __native.gpuQueueSubmit(devId, [cmdBuf]);
+        \\  return true;
+        \\})()
+    ;
+    var result = try engine.eval(js_src, "<test>");
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), try result.toInt32());
+}
+
+test "gpuComputePassEncoder debug groups with real hardware" {
+    var ht = try HandleTable.init(testing.allocator, 32);
+    defer ht.deinit(testing.allocator);
+
+    const context_result = try createTestGpuContext(testing.allocator);
+    const gctx = context_result[0];
+    const glfw_window = context_result[1];
+    defer destroyTestGpuContext(gctx, glfw_window, testing.allocator);
+
+    var bridge = try GpuBridge.init(&ht, gctx);
+    defer bridge.deinit();
+
+    var engine = try JsEngine.init(testing.allocator);
+    defer engine.deinit();
+
+    try bridge.register(engine.context);
+
+    const js_src =
+        \\(function() {
+        \\  var devId = __native.gpuRequestDevice(0);
+        \\  var encId = __native.gpuCreateCommandEncoder(devId);
+        \\  var passId = __native.gpuCommandEncoderBeginComputePass(encId, {});
+        \\  var r1 = __native.gpuComputePassEncoderPushDebugGroup(passId, 'group1');
+        \\  if (r1 !== undefined) return 'push expected undefined';
+        \\  var r2 = __native.gpuComputePassEncoderInsertDebugMarker(passId, 'marker1');
+        \\  if (r2 !== undefined) return 'marker expected undefined';
+        \\  var r3 = __native.gpuComputePassEncoderPopDebugGroup(passId);
+        \\  if (r3 !== undefined) return 'pop expected undefined';
+        \\  __native.gpuComputePassEncoderEnd(passId);
+        \\  var cmdBuf = __native.gpuCommandEncoderFinish(encId);
+        \\  __native.gpuQueueSubmit(devId, [cmdBuf]);
         \\  return true;
         \\})()
     ;
