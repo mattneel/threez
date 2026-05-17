@@ -4439,17 +4439,6 @@ fn gpuDevicePushErrorScopeNative(
     return Value.undefined;
 }
 
-fn errorScopeNoop(
-    err_type: wgpu.ErrorType,
-    message: wgpu.StringView,
-    userdata: ?*anyopaque,
-) callconv(.c) void {
-    _ = err_type;
-    _ = message;
-    _ = userdata;
-}
-
-/// __native.gpuDevicePopErrorScope(deviceId) → undefined
 fn gpuDevicePopErrorScopeNative(
     ctx: ?*Context,
     _: Value,
@@ -4463,8 +4452,25 @@ fn gpuDevicePopErrorScopeNative(
 
     if (argv.len < 1) return Value.undefined;
 
-    _ = gctx.device.popErrorScope(&errorScopeNoop, null);
+    var cb_info = std.mem.zeroes(raw.c.WGPUPopErrorScopeCallbackInfo);
+    cb_info.mode = raw.c.WGPUCallbackMode_AllowSpontaneous;
+    cb_info.callback = &popErrorScopeCallback;
+    _ = raw.c.wgpuDevicePopErrorScope(@ptrCast(gctx.device), cb_info);
     return Value.undefined;
+}
+
+fn popErrorScopeCallback(
+    status: raw.c.WGPUPopErrorScopeStatus,
+    type_: raw.c.WGPUErrorType,
+    message: raw.c.WGPUStringView,
+    userdata1: ?*anyopaque,
+    userdata2: ?*anyopaque,
+) callconv(.c) void {
+    _ = status;
+    _ = type_;
+    _ = message;
+    _ = userdata1;
+    _ = userdata2;
 }
 
 /// __native.gpuBufferMapAsync(bufferId, mode, offset, size) → undefined

@@ -182,18 +182,18 @@ pub const DeviceLostReason = enum(u32) {
 };
 
 pub const ErrorFilter = enum(u32) {
-    validation = 0x00000000,
-    out_of_memory = 0x00000001,
-    internal = 0x00000002,
-};
-
-pub const ErrorType = enum(u32) {
-    no_error = 0x00000000,
     validation = 0x00000001,
     out_of_memory = 0x00000002,
     internal = 0x00000003,
-    unknown = 0x00000004,
-    device_lost = 0x00000005,
+};
+
+pub const ErrorType = enum(u32) {
+    no_error = 0x00000001,
+    validation = 0x00000002,
+    out_of_memory = 0x00000003,
+    internal = 0x00000004,
+    unknown = 0x00000005,
+    device_lost = 0x00000006,
 };
 
 pub const FeatureName = enum(u32) {
