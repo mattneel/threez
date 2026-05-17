@@ -1278,6 +1278,13 @@ fn gpuCreateBufferNative(
     return Value.initFloat64(@floatFromInt(id.toNumber()));
 }
 
+/// Safe wrapper around toCString — returns null for JS undefined/null
+/// instead of converting them to the string "undefined"/"null".
+fn safeToCString(val: Value, ctx: *Context) ?[*:0]const u8 {
+    if (val.isUndefined() or val.isNull()) return null;
+    return val.toCString(ctx);
+}
+
 /// __native.gpuCreateTexture(deviceId, descriptor) → number (texture handle ID)
 fn gpuCreateTextureNative(
     ctx_opt: ?*Context,
@@ -1331,7 +1338,7 @@ fn gpuCreateTextureNative(
     const js_fmt_val = js_desc.getPropertyStr(ctx, "format");
     defer js_fmt_val.deinit(ctx);
     const fmt: raw.c.WGPUTextureFormat = blk: {
-        if (js_fmt_val.toCString(ctx)) |s| {
+        if (safeToCString(js_fmt_val, ctx)) |s| {
             defer ctx.freeCString(s);
             break :blk parseTextureFormat(std.mem.span(s));
         }
@@ -1345,7 +1352,7 @@ fn gpuCreateTextureNative(
     const js_dim_val = js_desc.getPropertyStr(ctx, "dimension");
     defer js_dim_val.deinit(ctx);
     const dimension: raw.c.WGPUTextureDimension = blk: {
-        if (js_dim_val.toCString(ctx)) |s| {
+        if (safeToCString(js_dim_val, ctx)) |s| {
             defer ctx.freeCString(s);
             const str = std.mem.span(s);
             if (std.mem.eql(u8, str, "1d")) break :blk raw.c.WGPUTextureDimension_1D;
@@ -3190,7 +3197,7 @@ fn gpuComputePassEncoderPushDebugGroupNative(
     const pass: wgpu.ComputePassEncoder = pass_entry.handle.as(wgpu.ComputePassEncoder) orelse return Value.undefined;
 
     const label_val: Value = @bitCast(argv[1]);
-    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    const label_ptr = safeToCString(label_val, context) orelse return Value.undefined;
     defer context.freeCString(label_ptr);
 
     pass.pushDebugGroup(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
@@ -3238,7 +3245,7 @@ fn gpuComputePassEncoderInsertDebugMarkerNative(
     const pass: wgpu.ComputePassEncoder = pass_entry.handle.as(wgpu.ComputePassEncoder) orelse return Value.undefined;
 
     const label_val: Value = @bitCast(argv[1]);
-    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    const label_ptr = safeToCString(label_val, context) orelse return Value.undefined;
     defer context.freeCString(label_ptr);
 
     pass.insertDebugMarker(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
@@ -3405,7 +3412,7 @@ fn gpuRenderPassPushDebugGroupNative(
     const pass: wgpu.RenderPassEncoder = pass_entry.handle.as(wgpu.RenderPassEncoder) orelse return Value.undefined;
 
     const label_val: Value = @bitCast(argv[1]);
-    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    const label_ptr = safeToCString(label_val, context) orelse return Value.undefined;
     defer context.freeCString(label_ptr);
 
     pass.pushDebugGroup(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
@@ -3457,7 +3464,7 @@ fn gpuRenderPassInsertDebugMarkerNative(
     const pass: wgpu.RenderPassEncoder = pass_entry.handle.as(wgpu.RenderPassEncoder) orelse return Value.undefined;
 
     const label_val: Value = @bitCast(argv[1]);
-    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    const label_ptr = safeToCString(label_val, context) orelse return Value.undefined;
     defer context.freeCString(label_ptr);
 
     pass.insertDebugMarker(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
@@ -3609,7 +3616,7 @@ fn gpuCreateRenderBundleEncoderNative(
     var depth_stencil_format: wgpu.TextureFormat = .undef;
     const dsf_val = desc_val.getPropertyStr(context, "depthStencilFormat");
     defer dsf_val.deinit(context);
-    if (dsf_val.toCString(context)) |s| {
+    if (safeToCString(dsf_val, context)) |s| {
         defer context.freeCString(s);
         depth_stencil_format = @enumFromInt(parseTextureFormat(std.mem.span(s)));
     }
@@ -3683,7 +3690,7 @@ fn gpuRenderBundleEncoderPushDebugGroupNative(
     const encoder: wgpu.RenderBundleEncoder = enc_entry.handle.as(wgpu.RenderBundleEncoder) orelse return Value.undefined;
 
     const label_val: Value = @bitCast(argv[1]);
-    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    const label_ptr = safeToCString(label_val, context) orelse return Value.undefined;
     defer context.freeCString(label_ptr);
 
     encoder.pushDebugGroup(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
@@ -3731,7 +3738,7 @@ fn gpuRenderBundleEncoderInsertDebugMarkerNative(
     const encoder: wgpu.RenderBundleEncoder = enc_entry.handle.as(wgpu.RenderBundleEncoder) orelse return Value.undefined;
 
     const label_val: Value = @bitCast(argv[1]);
-    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    const label_ptr = safeToCString(label_val, context) orelse return Value.undefined;
     defer context.freeCString(label_ptr);
 
     encoder.insertDebugMarker(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
@@ -4251,7 +4258,7 @@ fn gpuCommandEncoderPushDebugGroupNative(
     const encoder: wgpu.CommandEncoder = enc_entry.handle.as(wgpu.CommandEncoder) orelse return Value.undefined;
 
     const label_val: Value = @bitCast(argv[1]);
-    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    const label_ptr = safeToCString(label_val, context) orelse return Value.undefined;
     defer context.freeCString(label_ptr);
 
     encoder.pushDebugGroup(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
@@ -4299,7 +4306,7 @@ fn gpuCommandEncoderInsertDebugMarkerNative(
     const encoder: wgpu.CommandEncoder = enc_entry.handle.as(wgpu.CommandEncoder) orelse return Value.undefined;
 
     const label_val: Value = @bitCast(argv[1]);
-    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    const label_ptr = safeToCString(label_val, context) orelse return Value.undefined;
     defer context.freeCString(label_ptr);
 
     encoder.insertDebugMarker(.{ .data = label_ptr, .length = std.mem.sliceTo(label_ptr, 0).len });
@@ -4519,7 +4526,7 @@ fn gpuSetLabelNative(
     const entry = ht.get(id) catch return Value.undefined;
 
     const label_val: Value = @bitCast(argv[1]);
-    const label_ptr = label_val.toCString(context) orelse return Value.undefined;
+    const label_ptr = safeToCString(label_val, context) orelse return Value.undefined;
     defer context.freeCString(label_ptr);
     const label_len = std.mem.sliceTo(label_ptr, 0).len;
 
